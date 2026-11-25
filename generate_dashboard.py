@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Global Money Flow & Market Dashboard (v2)
+Global Money Flow & Market Dashboard (v3 LIVE BOARD)
 =========================================
 APIキー不要の無料データソースから世界のマネーフロー指標を取得し、
 「数値カード＋自動分析＋期間別パフォーマンス＋4段チャート」を備えた
@@ -21,6 +21,7 @@ APIキー不要の無料データソースから世界のマネーフロー指�
 from __future__ import annotations
 
 import argparse
+import json
 import html as html_lib
 import io
 import os
@@ -33,7 +34,8 @@ from typing import Optional
 import pandas as pd
 import plotly.graph_objects as go
 import requests
-from plotly.subplots import make_subplots
+from plotly.subplots import make_subplots  # noqa: F401 (v2互換のため残置)
+import plotly.offline as po
 
 # =============================================================================
 # A. 設定
@@ -485,6 +487,27 @@ def _demo_data() -> dict[str, pd.Series]:
     d["ハイイールド債スプレッド (%)"] = reverted(days, 3.4, 0.06, 2.2, 6.5)
     d["米国債ボラティリティ (bp)"] = reverted(days, 8.0, 0.3, 3.0, 18.0)
     d["ステーブルコイン時価総額 ($B)"] = walk(days, 160.0, 0.0008, 0.004)
+
+    # ---- v4: 世界指数ダミーデータ ----
+    d["英国 (FTSE 100)"] = walk(days, 7800, 0.0003, 0.008)
+    d["ドイツ (DAX)"] = walk(days, 18500, 0.0004, 0.009)
+    d["中国 (上海総合)"] = walk(days, 3100, 0.0002, 0.011)
+    d["香港 (ハンセン)"] = walk(days, 17500, 0.0001, 0.014)
+    d["インド (Nifty 50)"] = walk(days, 23500, 0.0006, 0.009)
+    d["ブラジル (BOVESPA)"] = walk(days, 125000, 0.0003, 0.013)
+    d["オートラリア (ASX)"] = walk(days, 8200, 0.0003, 0.008)
+    d["カナダ (TSX)"] = walk(days, 24500, 0.0003, 0.008)
+
+    # ---- v4: 資産クラスETFダミーデータ ----
+    d["米長期債 (TLT)"] = walk(days, 95.0, -0.0002, 0.007)
+    d["米中期債 (IEF)"] = walk(days, 102.0, -0.0001, 0.005)
+    d["ハイールド債 (HYG)"] = walk(days, 78.0, 0.0002, 0.006)
+    d["投資適格債 (LQD)"] = walk(days, 112.0, 0.0001, 0.005)
+    d["不動産 (VNQ)"] = walk(days, 85.0, 0.0002, 0.010)
+    d["新興国株式 (EEM)"] = walk(days, 42.0, 0.0003, 0.012)
+    d["先進国株式 ex-US (EFA)"] = walk(days, 78.0, 0.0003, 0.009)
+    d["原油 WTI (CL=F)"] = walk(days, 72.0, 0.0002, 0.018)
+
     return d
 
 
@@ -539,27 +562,27 @@ def score_regime(data: dict[str, pd.Series]) -> tuple[str, int, int, list[str]]:
         dev = deviation_from_sma(spx, 200)
         if dev is not None and dev > 0:
             score += 1
-            reasons.append(f"S&P 500 は200日移動平均を {dev:+.1f}% 上回る（上昇基調）")
+            reasons.append((f"S&P 500 は200日移動平均を {dev:+.1f}% 上回る（上昇基調）", True))
         elif dev is not None:
-            reasons.append(f"S&P 500 は200日移動平均を {dev:+.1f}% 下回る（調整局面）")
+            reasons.append((f"S&P 500 は200日移動平均を {dev:+.1f}% 下回る（調整局面）", False))
 
     vix = data.get("VIX (株式恐怖指数)")
     if vix is not None and not vix.empty:
         total += 1
         if vix.iloc[-1] < 20:
             score += 1
-            reasons.append(f"VIX は {vix.iloc[-1]:.1f} と低水準（投資家の警戒感は小さい）")
+            reasons.append((f"VIX は {vix.iloc[-1]:.1f} と低水準（投資家の警戒感は小さい）", True))
         else:
-            reasons.append(f"VIX は {vix.iloc[-1]:.1f} と高め（警戒感が残る）")
+            reasons.append((f"VIX は {vix.iloc[-1]:.1f} と高め（警戒感が残る）", False))
 
     hy = data.get("ハイイールド債スプレッド (%)")
     if hy is not None and not hy.empty:
         total += 1
         if hy.iloc[-1] < 4.0:
             score += 1
-            reasons.append(f"ハイイールド債スプレッドは {hy.iloc[-1]:.2f}% で信用環境は良好")
+            reasons.append((f"ハイイールド債スプレッドは {hy.iloc[-1]:.2f}% で信用環境は良好", True))
         else:
-            reasons.append(f"ハイイールド債スプレッドは {hy.iloc[-1]:.2f}% で信用リスクが意識される")
+            reasons.append((f"ハイイールド債スプレッドは {hy.iloc[-1]:.2f}% で信用リスクが意識される", False))
 
     dxy = data.get("米ドル指数 (DXY)")
     if dxy is not None and not dxy.empty:
@@ -567,9 +590,9 @@ def score_regime(data: dict[str, pd.Series]) -> tuple[str, int, int, list[str]]:
         m1 = period_return(dxy, 30)
         if m1 is not None and m1 < 0:
             score += 1
-            reasons.append(f"ドル指数は1ヶ月で {m1:+.2f}% と下落（ドル安は新興国・リスク資産に追い風）")
+            reasons.append((f"ドル指数は1ヶ月で {m1:+.2f}% と下落（ドル安は新興国・リスク資産に追い風）", True))
         elif m1 is not None:
-            reasons.append(f"ドル指数は1ヶ月で {m1:+.2f}% と上昇（ドル高はリスク資産の重荷）")
+            reasons.append((f"ドル指数は1ヶ月で {m1:+.2f}% と上昇（ドル高はリスク資産の重荷）", False))
 
     stable = data.get("ステーブルコイン時価総額 ($B)")
     if stable is not None and not stable.empty:
@@ -577,9 +600,9 @@ def score_regime(data: dict[str, pd.Series]) -> tuple[str, int, int, list[str]]:
         m1 = period_return(stable, 30)
         if m1 is not None and m1 > 0:
             score += 1
-            reasons.append(f"ステーブルコイン残高は1ヶ月で {m1:+.2f}% 増加（暗号資産市場へ資金流入）")
+            reasons.append((f"ステーブルコイン残高は1ヶ月で {m1:+.2f}% 増加（暗号資産市場へ資金流入）", True))
         elif m1 is not None:
-            reasons.append(f"ステーブルコイン残高は1ヶ月で {m1:+.2f}% 減少（暗号資産市場から資金流出）")
+            reasons.append((f"ステーブルコイン残高は1ヶ月で {m1:+.2f}% 減少（暗号資産市場から資金流出）", False))
 
     m2 = data.get("米国M2 ($B)")
     if m2 is not None and not m2.empty:
@@ -587,9 +610,9 @@ def score_regime(data: dict[str, pd.Series]) -> tuple[str, int, int, list[str]]:
         d90 = period_change_abs(m2, 91)
         if d90 is not None and d90 > 0:
             score += 1
-            reasons.append(f"米国M2は3ヶ月で {d90:+,.0f} B$ 増加（マクロの流動性は拡大方向）")
+            reasons.append((f"米国M2は3ヶ月で {d90:+,.0f} B$ 増加（マクロの流動性は拡大方向）", True))
         elif d90 is not None:
-            reasons.append(f"米国M2は3ヶ月で {d90:+,.0f} B$ 減少（流動性は縮小方向）")
+            reasons.append((f"米国M2は3ヶ月で {d90:+,.0f} B$ 減少（流動性は縮小方向）", False))
 
     mmf = data.get("米国MMF残高 ($B)")
     if mmf is not None and not mmf.empty:
@@ -597,12 +620,12 @@ def score_regime(data: dict[str, pd.Series]) -> tuple[str, int, int, list[str]]:
         d90 = period_change_abs(mmf, 91)
         if d90 is not None and d90 < 0:
             score += 1
-            reasons.append(f"米国MMF残高は3ヶ月で {d90:+,.0f} B$ 減少（待機資金が市場へ向かう兆候）")
+            reasons.append((f"米国MMF残高は3ヶ月で {d90:+,.0f} B$ 減少（待機資金が市場へ向かう兆候）", True))
         elif d90 is not None:
-            reasons.append(f"米国MMF残高は3ヶ月で {d90:+,.0f} B$ 増加（待機資金が積み上がる局面）")
+            reasons.append((f"米国MMF残高は3ヶ月で {d90:+,.0f} B$ 増加（待機資金が積み上がる局面）", False))
 
     if total == 0:
-        return "判定不能", 0, 0, ["データが不足しているため判定できません。"]
+        return "判定不能", 0, 0, [("データが不足しているため判定できません。", False)]
     ratio = score / total
     if ratio >= 0.7:
         label = "リスクオン（資金がリスク資産へ向かう地合い）"
@@ -729,590 +752,1006 @@ def build_analysis(data: dict[str, pd.Series]) -> dict:
         "table": build_performance_table(data),
     }
 
+HTML_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Global Money Flow — 資金フロー・ライブボード</title>
+<style>
+  :root{
+    --ink:#e9eefa; --ink2:#a8b7cd; --muted:#6f819a;
+    --line:rgba(148,163,184,.14); --line2:rgba(148,163,184,.07);
+    --up:#34d399; --down:#fb7185; --flat:#8fa3bd;
+    --accent:#22d3ee; --accent2:#5eead4;
+    --panelbg:rgba(16,25,41,.74);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; color:var(--ink); overflow:hidden;
+    font-family:'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic UI','Yu Gothic','Meiryo','Noto Sans JP','Segoe UI',sans-serif;
+    font-size:13px; line-height:1.55; -webkit-font-smoothing:antialiased;
+    background:
+      radial-gradient(1100px 560px at 10% -12%, rgba(34,211,238,.13), transparent 62%),
+      radial-gradient(980px 520px at 96% -6%, rgba(94,234,212,.09), transparent 58%),
+      radial-gradient(900px 700px at 50% 120%, rgba(59,130,246,.10), transparent 60%),
+      #060a12;
+  }
+  .app{height:100vh; height:100dvh; display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; gap:0; overflow:hidden}
+
+  /* ---------- header ---------- */
+  header{display:flex; align-items:center; justify-content:space-between; gap:14px; padding:10px 16px 8px}
+  .brand{display:flex; align-items:center; gap:11px; min-width:0}
+  .logo{width:32px;height:32px;border-radius:10px;flex:0 0 auto;
+    background:conic-gradient(from 210deg,#22d3ee,#5eead4,#38bdf8,#22d3ee);
+    box-shadow:0 0 0 1px rgba(255,255,255,.10), 0 8px 22px -10px rgba(34,211,238,.8);
+    display:grid;place-items:center;color:#04121a;font-weight:800;font-size:15px}
+  h1{margin:0;font-size:16px;font-weight:800;letter-spacing:.01em;white-space:nowrap}
+  h1 small{display:block;font-size:10.5px;font-weight:500;color:var(--muted);letter-spacing:.02em;margin-top:1px}
+  .topright{display:flex;align-items:center;gap:12px;min-width:0}
+  .stamp{display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+  .stamp .lbl{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+    border:1px solid var(--line);border-radius:999px;padding:1px 7px}
+  .stamp b{font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink2)}
+  .ghost{background:rgba(148,163,184,.08);border:1px solid var(--line);color:var(--ink2);
+    border-radius:9px;width:28px;height:28px;cursor:pointer;font-size:13px;line-height:1;transition:.18s}
+  .ghost:hover{background:rgba(34,211,238,.16);color:var(--accent);border-color:rgba(34,211,238,.4)}
+
+  /* ---------- ticker ---------- */
+  .ticker{overflow:hidden;border-top:1px solid var(--line2);border-bottom:1px solid var(--line2);
+    background:rgba(8,14,24,.55);height:30px;display:flex;align-items:center;
+    mask-image:linear-gradient(90deg,transparent,#000 3%,#000 97%,transparent)}
+  .tape{display:flex;gap:26px;white-space:nowrap;animation:slide 46s linear infinite;padding-left:12px}
+  .ticker:hover .tape{animation-play-state:paused}
+  @keyframes slide{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+  .tape span{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink2)}
+  .tape b{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
+  .tape em{font-style:normal;font-variant-numeric:tabular-nums;font-weight:700;font-size:11px}
+  .tape em.up{color:var(--up)} .tape em.down{color:var(--down)} .tape em.flat{color:var(--flat)}
+
+  /* ---------- grid ---------- */
+  .grid{display:grid;grid-template-columns:320px minmax(0,1fr) 348px;gap:11px;padding:11px 14px;min-height:0;overflow:hidden}
+  .col{display:flex;flex-direction:column;gap:11px;min-height:0}
+  .panel{background:var(--panelbg);border:1px solid var(--line);border-radius:15px;padding:12px 13px;
+    display:flex;flex-direction:column;min-height:0;
+    box-shadow:0 14px 34px -24px rgba(0,0,0,.95), inset 0 1px 0 rgba(255,255,255,.035);
+    backdrop-filter:blur(9px)}
+  .panel-h{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    font-size:10.5px;font-weight:800;letter-spacing:.10em;text-transform:uppercase;color:var(--muted);
+    margin:0 0 9px;flex:0 0 auto}
+  .panel-h .r{font-weight:600;letter-spacing:0;text-transform:none;font-size:10px;color:#5f728a}
+
+  /* ---------- gauge ---------- */
+  .gaugeBox{position:relative;flex:0 0 auto;display:flex;flex-direction:column;align-items:center;padding:2px 0 0}
+  .gaugeBox svg{width:100%;max-width:250px;height:auto;display:block}
+  .gaugeCenter{position:absolute;left:0;right:0;top:44%;text-align:center;pointer-events:none}
+  .gaugeCenter .n{font-size:34px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;
+    background:linear-gradient(180deg,#e9eefa,#7dd3fc);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .gaugeCenter .d{font-size:10.5px;color:var(--muted);margin-top:3px;letter-spacing:.06em}
+  .regimeName{margin:7px 0 2px;text-align:center;font-size:13px;font-weight:800;line-height:1.4}
+  .regimeName .tagline{display:block;font-size:10px;font-weight:600;color:var(--muted);letter-spacing:.03em;margin-top:2px}
+  .reasons{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:5px;
+    overflow:auto;scrollbar-width:thin;min-height:0;flex:1 1 auto}
+  .reasons::-webkit-scrollbar{width:5px}
+  .reasons::-webkit-scrollbar-thumb{background:rgba(148,163,184,.25);border-radius:3px}
+  .reasons li{position:relative;padding-left:15px;font-size:11px;line-height:1.5;color:var(--ink2)}
+  .reasons li::before{content:"";position:absolute;left:3px;top:.52em;width:5px;height:5px;border-radius:50%;background:#64748b}
+  .reasons li.on::before{background:var(--up);box-shadow:0 0 8px rgba(52,211,153,.75)}
+  .reasons li.off::before{background:var(--down);box-shadow:0 0 8px rgba(251,113,133,.6)}
+
+  /* ---------- tabs / chart ---------- */
+  .chartPanel{flex:1 1 auto;min-height:0;padding:10px 12px 8px}
+  .tabsRow{display:flex;align-items:center;justify-content:space-between;gap:10px;flex:0 0 auto;margin-bottom:6px;flex-wrap:wrap}
+  .tabs{display:flex;gap:4px;background:rgba(148,163,184,.07);padding:3px;border-radius:11px;border:1px solid var(--line2)}
+  .tab{appearance:none;border:0;background:transparent;color:var(--ink2);font-family:inherit;
+    font-size:11.5px;font-weight:700;padding:5px 11px;border-radius:8px;cursor:pointer;transition:.18s;white-space:nowrap}
+  .tab:hover{color:#e9eefa;background:rgba(148,163,184,.10)}
+  .tab.active{background:linear-gradient(180deg,rgba(34,211,238,.28),rgba(34,211,238,.14));
+    color:#d7fbff;box-shadow:0 0 0 1px rgba(34,211,238,.45), 0 6px 16px -10px rgba(34,211,238,.9)}
+  .tools{display:flex;align-items:center;gap:6px}
+  .periods{display:flex;gap:2px;background:rgba(148,163,184,.07);padding:3px;border-radius:9px;border:1px solid var(--line2)}
+  .pbtn{appearance:none;border:0;background:transparent;color:var(--muted);font-family:inherit;
+    font-size:10.5px;font-weight:700;padding:3px 7px;border-radius:6px;cursor:pointer;transition:.16s}
+  .pbtn:hover{color:var(--ink2)}
+  .pbtn.active{background:rgba(94,234,212,.18);color:#d7fff7;box-shadow:0 0 0 1px rgba(94,234,212,.35)}
+  .autobtn{font-size:10px;padding:3px 8px;border-radius:7px;border:1px solid var(--line);background:rgba(148,163,184,.07);
+    color:var(--muted);cursor:pointer;font-family:inherit;font-weight:700;transition:.16s}
+  .autobtn.on{color:#d7fff7;border-color:rgba(94,234,212,.42);background:rgba(94,234,212,.15)}
+  .chartShell{position:relative;flex:1 1 auto;min-height:0}
+  .plot{position:absolute;inset:0;opacity:1;transition:opacity .32s ease}
+  .js-plotly-plot .plotly .modebar{display:none!important}
+
+  /* ---------- heat strip ---------- */
+  .heatPanel{flex:0 0 auto;padding:9px 12px 10px}
+  table.heat{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:10.8px}
+  table.heat th{font-size:9.5px;font-weight:700;letter-spacing:.06em;color:var(--muted);text-align:right;
+    padding:3px 5px;border-bottom:1px solid var(--line2);white-space:nowrap}
+  table.heat th:first-child{text-align:left}
+  table.heat td{padding:3px 5px;text-align:right;color:var(--ink2);white-space:nowrap;border-bottom:1px solid rgba(148,163,184,.05)}
+  table.heat td:first-child{text-align:left;color:var(--ink);font-weight:600;font-size:10.5px}
+  table.heat td.h{font-weight:700;border-radius:5px}
+  table.heat td.h.pos{color:#d1fae5} table.heat td.h.neg{color:#ffe4e6}
+  table.heat td.na{color:#43536b}
+
+  /* ---------- metrics list ---------- */
+  .metrics{flex:1 1 auto;min-height:0}
+  .mlist{display:flex;flex-direction:column;overflow:auto;min-height:0;scrollbar-width:thin;margin:0 -4px;padding:0 4px;flex:1 1 auto}
+  .mlist::-webkit-scrollbar{width:5px}
+  .mlist::-webkit-scrollbar-thumb{background:rgba(148,163,184,.25);border-radius:3px}
+  .mrow{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:5px 0;border-bottom:1px solid rgba(148,163,184,.06)}
+  .mrow:last-child{border-bottom:0}
+  .mrow .nm{font-size:11.3px;color:var(--ink2);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mrow .vl{font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums;text-align:right;line-height:1.2}
+  .mrow .rt{display:flex;align-items:center;gap:6px;grid-column:1/-1}
+  .spark{width:66px;height:16px;flex:0 0 auto;opacity:.9}
+  .chip{font-size:10px;font-weight:800;padding:1px 5px;border-radius:5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .chip.up{color:#062e22;background:rgba(52,211,153,.85)}
+  .chip.down{color:#3d0713;background:rgba(251,113,133,.85)}
+  .chip.flat{color:#0b1220;background:rgba(148,163,184,.55)}
+  .chip.ghost{color:var(--muted);background:rgba(148,163,184,.10);font-weight:700}
+
+  /* ---------- status / footer ---------- */
+  .statusPanel{flex:0 0 auto;padding:10px 12px}
+  .sgrid{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:10.3px;color:var(--muted)}
+  .sitem{display:flex;align-items:center;gap:5px;min-width:0}
+  .dot{width:6px;height:6px;border-radius:50%;flex:0 0 auto}
+  .dot.ok{background:var(--up);box-shadow:0 0 7px rgba(52,211,153,.8)}
+  .dot.ng{background:var(--down);box-shadow:0 0 7px rgba(251,113,133,.8)}
+  .sitem span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  footer{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
+    padding:6px 16px 8px;border-top:1px solid var(--line2);font-size:10px;color:#5a6b82}
+  footer b{color:var(--ink2);font-weight:700}
+  footer code{background:rgba(148,163,184,.10);padding:1px 4px;border-radius:4px;font-size:9.5px}
+
+  @media (max-height:840px){
+    body{font-size:12px}
+    header{padding:7px 14px 6px}
+    h1{font-size:14.5px}
+    .grid{padding:8px 12px;gap:9px}
+    .panel{padding:9px 10px;border-radius:13px}
+    .gaugeCenter .n{font-size:27px}
+    .reasons li{font-size:10.2px}
+    .mrow{padding:3.5px 0}
+    .chartPanel{padding:8px 10px 6px}
+  }
+  @media (max-width:1180px), (max-height:660px){
+    body{overflow:auto}
+    .app{height:auto;min-height:100vh;overflow:visible}
+    .grid{grid-template-columns:1fr;overflow:visible}
+    .chartShell{height:52vh;min-height:330px;position:relative}
+    .metrics,.reasons{overflow:visible}
+    .mlist{overflow:visible}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <div class="logo">◎</div>
+      <div>
+        <h1>Global Money Flow<small>世界の資金フロー定点観測 ／ リスク資産・ストレス・流動性</small></h1>
+      </div>
+    </div>
+    <div class="topright">
+      <div class="stamp">
+        <span class="lbl">最終更新</span><b>__UPDATED_AT__</b>
+        <span class="lbl">観測期間</span><b>__PERIOD__</b>
+      </div>
+      <button class="ghost" id="fsBtn" title="全画面表示（F）">⛶</button>
+    </div>
+  </header>
+
+  <div class="ticker"><div class="tape">__TICKER__</div></div>
+
+  <main class="grid">
+    <section class="col left">
+      <div class="panel" style="flex:0 1 auto">
+        <div class="panel-h">地合い判定<span class="r">__SCORE__ / __TOTAL__ 項目</span></div>
+        <div class="gaugeBox">
+          <svg viewBox="0 0 240 132" aria-hidden="true">
+            <defs>
+              <linearGradient id="gg" x1="0" y1="1" x2="1" y2="0">
+                <stop offset="0%" stop-color="#fb7185"/>
+                <stop offset="52%" stop-color="#fbbf24"/>
+                <stop offset="100%" stop-color="#34d399"/>
+              </linearGradient>
+            </defs>
+            <path d="M22,118 A98,98 0 0,1 218,118" fill="none" stroke="rgba(148,163,184,.16)" stroke-width="13" stroke-linecap="round"/>
+            <path id="gaugeArc" d="M22,118 A98,98 0 0,1 218,118" fill="none" stroke="url(#gg)" stroke-width="13"
+                  stroke-linecap="round" stroke-dasharray="308" stroke-dashoffset="308" data-ratio="__RATIO__"
+                  style="transition:stroke-dashoffset 1.1s cubic-bezier(.22,.9,.24,1)"/>
+          </svg>
+          <div class="gaugeCenter">
+            <div class="n" id="gaugeNum" data-num="__SCOREF__" data-dec="0">0</div>
+            <div class="d">RISK-ON SCORE</div>
+          </div>
+        </div>
+        <div class="regimeName">__REGIME__</div>
+        <ul class="reasons">__REASONS__</ul>
+      </div>
+      <div class="panel" style="flex:1 1 auto">
+        <div class="panel-h">ストレス要約</div>
+        <p style="margin:0 0 8px;font-size:11.2px;line-height:1.6;color:var(--ink2)">__STRESS__</p>
+        <div class="panel-h" style="margin:6px 0 6px">リスク指標</div>
+        <div class="mlist" style="gap:0">__RISKM__</div>
+      </div>
+    </section>
+
+    <section class="col center">
+      <div class="panel chartPanel">
+        <div class="tabsRow">
+          <div class="tabs">__TABS__</div>
+          <div class="tools">
+            <div class="periods">__PERIODBTN__</div>
+            <button class="autobtn on" id="autoBtn" title="9秒ごとに表示を自動で切り替えます">AUTO</button>
+          </div>
+        </div>
+        <div class="chartShell">__CHARTS__</div>
+      </div>
+      <div class="panel heatPanel">
+        <div class="panel-h">期間別パフォーマンス<span class="r">単位 %／直近データ日から各期間前との比較</span></div>
+        __HEAT__
+      </div>
+    </section>
+
+    <section class="col right">
+      <div class="panel metrics">
+        <div class="panel-h">指標スナップショット<span class="r">1M比</span></div>
+        <div class="mlist">__METRICS__</div>
+      </div>
+      <div class="panel statusPanel">
+        <div class="panel-h" style="margin-bottom:7px">データ取得状況<span class="r">__STATUS_SUMMARY__</span></div>
+        <div class="sgrid">__STATUS__</div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div>__FOOTER_LEFT__</div>
+    <div>__FOOTER_RIGHT__</div>
+  </footer>
+</div>
+
+<script>__PLOTLYJS__</script>
+<script>
+const DASH = __PAYLOAD__;
+const FONT = "'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic UI','Meiryo','Noto Sans JP',sans-serif";
+const state = {tab:0, period:'ALL', auto:true, hover:false, rendered:{}};
+
+function tracesFor(g){
+  return g.traces.map(function(t){
+    var tr = {
+      x:t.dates, y:t.values, name:t.name, type:'scatter',
+      mode: t.markers ? 'lines+markers' : 'lines',
+      marker: t.markers ? {size:4, color:t.color} : undefined,
+      line:{color:t.color, width:t.width||2, dash:t.dash||'solid', shape:'linear'},
+      hovertemplate:'%{y:,.2f}<extra>'+t.name+'</extra>',
+      yaxis:t.axis||'y'
+    };
+    if(t.fill){tr.fill='tozeroy'; tr.fillcolor=t.fillcolor||'rgba(34,211,238,.12)';}
+    return tr;
+  });
+}
+function axisTitle(txt){return {text:txt||'', font:{size:9.5, color:'#6f819a'}, standoff:6};}
+function layoutFor(g){
+  var l = {
+    paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(0,0,0,0)',
+    margin:{l:2, r:g.y2?2:10, t:22, b:2},
+    font:{family:FONT, size:10.2, color:'#7c8ba1'},
+    hovermode:'x unified', dragmode:'pan', showlegend:true,
+    legend:{orientation:'h', x:0, y:1.14, xanchor:'left', font:{size:10, color:'#a8b7cd'}, bgcolor:'rgba(0,0,0,0)'},
+    xaxis:{type:'date', gridcolor:'rgba(148,163,184,.09)', zeroline:false,
+      tickfont:{size:9.5, color:'#6f819a'}, ticks:'outside', tickcolor:'rgba(148,163,184,.18)',
+      showspikes:true, spikemode:'across', spikethickness:1, spikedash:'dot', spikecolor:'rgba(94,234,212,.45)'},
+    yaxis:{gridcolor:'rgba(148,163,184,.09)', zeroline:false, automargin:true,
+      tickfont:{size:9.5, color:'#6f819a'}, title:axisTitle(g.y1)},
+    hoverlabel:{bgcolor:'rgba(9,15,26,.96)', bordercolor:'rgba(94,234,212,.35)',
+      font:{family:FONT, size:10.5, color:'#e9eefa'}},
+    transition:{duration:320, easing:'cubic-in-out'}
+  };
+  if(g.y2){
+    l.yaxis2 = {overlaying:'y', side:'right', showgrid:false, zeroline:false, automargin:true,
+      tickfont:{size:9.5, color:'#6f819a'}, title:axisTitle(g.y2)};
+  }
+  if(g.hline){
+    l.shapes = [{type:'line', xref:'paper', x0:0, x1:1, y0:g.hline, y1:g.hline,
+      line:{color:'rgba(148,163,184,.32)', width:1, dash:'dot'}}];
+  }
+  return l;
+}
+function renderChart(i){
+  var g = DASH.groups[i];
+  var el = document.getElementById('chart'+i);
+  Plotly.newPlot(el, tracesFor(g), layoutFor(g),
+    {displayModeBar:false, responsive:true, scrollZoom:true, doubleClick:'reset'});
+  state.rendered[i] = true;
+  applyPeriod(i);
+}
+function applyPeriod(i){
+  var g = DASH.groups[i], el = document.getElementById('chart'+i);
+  if(!state.rendered[i]) return;
+  if(state.period === 'ALL'){ Plotly.relayout(el, {'xaxis.autorange':true}); return; }
+  var days = {'1M':30,'3M':91,'6M':182,'1Y':365}[state.period] || 30;
+  var d = g.traces[0].dates;
+  if(!d || !d.length) return;
+  var last = new Date(d[d.length-1]+'T00:00:00');
+  var start = new Date(last.getTime() - days*86400000);
+  Plotly.relayout(el, {'xaxis.autorange':false, 'xaxis.range':[iso(start), iso(last)]});
+}
+function iso(dt){
+  var m = ('0'+(dt.getMonth()+1)).slice(-2), day = ('0'+dt.getDate()).slice(-2);
+  return dt.getFullYear()+'-'+m+'-'+day;
+}
+function showTab(i){
+  state.tab = i;
+  var tabs = document.querySelectorAll('.tab');
+  for(var k=0;k<tabs.length;k++) tabs[k].classList.toggle('active', k===i);
+  var plots = document.querySelectorAll('.plot');
+  for(var k2=0;k2<plots.length;k2++){
+    if(k2===i){ plots[k2].style.display='block'; plots[k2].style.opacity='0';
+      setTimeout(function(){ plots[i].style.opacity='1'; }, 40); }
+    else plots[k2].style.display='none';
+  }
+  if(!state.rendered[i]) renderChart(i);
+  else Plotly.Plots.resize(document.getElementById('chart'+i));
+  applyPeriod(i);
+}
+document.querySelectorAll('.tab').forEach(function(b){
+  b.addEventListener('click', function(){
+    state.auto = false;
+    autoBtn.classList.remove('on');
+    autoBtn.textContent = 'MANUAL';
+    showTab(parseInt(b.dataset.i,10));
+  });
+});
+var chartPanelEl = document.querySelector('.chartPanel');
+chartPanelEl.addEventListener('mouseenter', function(){ state.hover = true; });
+chartPanelEl.addEventListener('mouseleave', function(){ state.hover = false; });
+document.querySelectorAll('.pbtn').forEach(function(b){
+  b.addEventListener('click', function(){
+    state.period = b.dataset.p;
+    document.querySelectorAll('.pbtn').forEach(function(x){ x.classList.toggle('active', x===b); });
+    for(var i=0;i<DASH.groups.length;i++){ if(state.rendered[i]) applyPeriod(i); }
+  });
+});
+var autoBtn = document.getElementById('autoBtn');
+autoBtn.addEventListener('click', function(){
+  state.auto = !state.auto;
+  autoBtn.classList.toggle('on', state.auto);
+  autoBtn.textContent = state.auto ? 'AUTO' : 'MANUAL';
+});
+setInterval(function(){
+  if(!state.auto || state.hover) return;
+  var next = (state.tab + 1) % DASH.groups.length;
+  showTab(next);
+}, 9000);
+document.getElementById('fsBtn').addEventListener('click', function(){
+  if(!document.fullscreenElement){ document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); }
+  else { document.exitFullscreen && document.exitFullscreen(); }
+});
+document.addEventListener('keydown', function(e){
+  if(e.key === 'ArrowRight') showTab((state.tab+1)%DASH.groups.length);
+  if(e.key === 'ArrowLeft') showTab((state.tab-1+DASH.groups.length)%DASH.groups.length);
+  if(e.key === 'f' || e.key === 'F'){ document.getElementById('fsBtn').click(); }
+});
+window.addEventListener('resize', function(){
+  for(var i=0;i<DASH.groups.length;i++){ if(state.rendered[i]) Plotly.Plots.resize(document.getElementById('chart'+i)); }
+});
+
+/* count-up & gauge */
+function countUp(el){
+  var target = parseFloat(el.dataset.num || '0'), dec = parseInt(el.dataset.dec || '0', 10);
+  var suffix = el.dataset.suffix || '', pre = el.dataset.pre || '';
+  if(!isFinite(target)) { return; }
+  var t0 = null, dur = 820;
+  function step(ts){
+    if(!t0) t0 = ts;
+    var p = Math.min((ts - t0)/dur, 1);
+    var e = 1 - Math.pow(1-p, 3);
+    var v = target * e;
+    el.textContent = pre + v.toLocaleString('ja-JP', {minimumFractionDigits:dec, maximumFractionDigits:dec}) + suffix;
+    if(p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+document.querySelectorAll('#gaugeNum').forEach(countUp);
+var arc = document.getElementById('gaugeArc');
+if(arc){ var ratio = Math.max(0, Math.min(1, parseFloat(arc.dataset.ratio || '0'))); }
+setTimeout(function(){ if(arc) arc.style.strokeDashoffset = String(308 * (1 - ratio)); }, 90);
+
+/* first paint */
+showTab(0);
+setTimeout(function(){ Plotly.Plots.resize(document.getElementById('chart0')); }, 140);
+</script>
+</body>
+</html>
+"""
+
 
 # =============================================================================
-# F. グラフ生成
+# E2. マネーフロー計算（v4追加）
 # =============================================================================
-def build_figure(data: dict[str, pd.Series]) -> tuple[go.Figure, list[dict]]:
-    """4段構成のインタラクティブグラフと、サマリーカードを生成する。"""
-    fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.085,
-        subplot_titles=(
-            "① リスク資産の相対推移（起点＝100）",
-            "② 現金逃避・市場ストレス（DXY／VIX／米国債ボラティリティ）",
-            "③ 暗号資産の資金量（ステーブルコイン時価総額）と信用スプレッド",
-            "④ マクロ流動性・待機現金（米国M2／米国MMF残高）",
-        ),
-        specs=[[{"secondary_y": False}],
-               [{"secondary_y": True}],
-               [{"secondary_y": True}],
-               [{"secondary_y": True}]],
-    )
 
-    cards: list[dict] = []
+# 資産クラス → 地域の分類マッピング
+ASSET_REGION_MAP: dict[str, str] = {
+    "米国株 (S&P 500)": "北米",
+    "ビットコイン (BTC)": "暗号資産",
+    "日本株 (日経平均)": "日本",
+    "欧州株 (EURO STOXX 50)": "欧州",
+    "ゴールド (Gold)": "商品",
+    "英国 (FTSE 100)": "欧州",
+    "ドイツ (DAX)": "欧州",
+    "中国 (上海総合)": "アジア",
+    "香港 (ハンセン)": "アジア",
+    "インド (Nifty 50)": "アジア",
+    "ブラジル (BOVESPA)": "ラテン",
+    "オーストラリア (ASX)": "大洋州",
+    "カナダ (TSX)": "北米",
+    "米長期債 (TLT)": "債券",
+    "米中期債 (IEF)": "債券",
+    "ハイールド債 (HYG)": "債券",
+    "投資適格債 (LQD)": "債券",
+    "不動産 (VNQ)": "不動産",
+    "新興国株式 (EEM)": "新興国",
+    "先進国株式 ex-US (EFA)": "先進国",
+    "原油 WTI (CL=F)": "商品",
+}
 
-    def add_card(label: str, raw: pd.Series, unit: str = "", digits: Optional[int] = None) -> None:
-        if raw is None or raw.empty:
-            return
-        cards.append({
-            "label": label,
-            "value": _fmt(raw.iloc[-1], unit, digits),
-            "d1": _pct_change_n(raw, 1),
-            "d1m": period_return(raw, 30),
-            "date": _last_date(raw),
+ASSET_CLASS_MAP: dict[str, str] = {
+    "米国株 (S&P 500)": "株式",
+    "ビットコイン (BTC)": "暗号資産",
+    "日本株 (日経平均)": "株式",
+    "欧州株 (EURO STOXX 50)": "株式",
+    "ゴールド (Gold)": "商品",
+    "英国 (FTSE 100)": "株式",
+    "ドイツ (DAX)": "株式",
+    "中国 (上海総合)": "株式",
+    "香港 (ハンセン)": "株式",
+    "インド (Nifty 50)": "株式",
+    "ブラジル (BOVESPA)": "株式",
+    "オーストラリア (ASX)": "株式",
+    "カナダ (TSX)": "株式",
+    "米長期債 (TLT)": "債券",
+    "米中期債 (IEF)": "債券",
+    "ハイールド債 (HYG)": "債券",
+    "投資適格債 (LQD)": "債券",
+    "不動産 (VNQ)": "不動産",
+    "新興国株式 (EEM)": "株式",
+    "先進国株式 ex-US (EFA)": "株式",
+    "原油 WTI (CL=F)": "商品",
+}
+
+
+def calc_flow_score(s: pd.Series, days: int = 30) -> float:
+    """1ヶ月リターンを[-1, 1]に正規化した資金フロースコア。"""
+    if s is None or s.empty:
+        return 0.0
+    r = period_return(s, days)
+    if r is None:
+        return 0.0
+    # 月次リターン ±15% を ±1.0 にマップ（tanhで飽和）
+    return float(np.tanh(r / 15.0))
+
+
+def build_sankey_flow(data: dict[str, pd.Series]) -> dict:
+    """Sankey図用: 源泉→資産クラス→地域のフローデータを構築。"""
+    import numpy as np
+
+    # ソースノード定義
+    source_nodes = ["M2拡大", "MMF流出", "ドル安", "ステーブル流入", "VIX低下"]
+    asset_classes = ["株式", "債券", "商品", "暗号資産", "不動産", "現金待機"]
+    regions = ["北米", "欧州", "日本", "アジア", "ラテン", "大洋州", "新興国", "先進国", "グローバル"]
+
+    all_nodes = source_nodes + asset_classes + regions
+    node_idx = {n: i for i, n in enumerate(all_nodes)}
+
+    links: list[dict] = []
+
+    # 各資産のフロースコアを計算
+    asset_scores: dict[str, float] = {}
+    for label in list(ASSET_CLASS_MAP.keys()):
+        s = data.get(label)
+        if s is not None and not s.empty:
+            asset_scores[label] = calc_flow_score(s, 30)
+
+    if not asset_scores:
+        return {"nodes": all_nodes, "links": [], "scores": {}}
+
+    # 資産クラスごとにスコア集計
+    class_scores: dict[str, float] = {c: 0.0 for c in asset_classes}
+    for label, score in asset_scores.items():
+        cls = ASSET_CLASS_MAP.get(label, "株式")
+        class_scores[cls] += score
+
+    # 地域ごとにスコア集計
+    region_scores: dict[str, float] = {r: 0.0 for r in regions}
+    for label, score in asset_scores.items():
+        region = ASSET_REGION_MAP.get(label, "グローバル")
+        region_scores[region] += score
+
+    # ソース→資産クラスのリンク
+    # M2拡大 → 株式・債券・商品（M2増加なら流入）
+    m2 = data.get("米国M2 ($B)")
+    m2_flow = calc_flow_score(m2, 90) if m2 is not None else 0.0
+    if m2_flow > 0:
+        links.append({"source": node_idx["M2拡大"], "target": node_idx["株式"], "value": abs(m2_flow) * 0.5})
+        links.append({"source": node_idx["M2拡大"], "target": node_idx["債券"], "value": abs(m2_flow) * 0.3})
+        links.append({"source": node_idx["M2拡大"], "target": node_idx["商品"], "value": abs(m2_flow) * 0.2})
+
+    # MMF流出 → 株式・債券（MMF減少なら市場へ流入）
+    mmf = data.get("米国MMF残高 ($B)")
+    mmf_flow = -calc_flow_score(mmf, 90) if mmf is not None else 0.0  # 減少=流入なので符号反転
+    if mmf_flow > 0:
+        links.append({"source": node_idx["MMF流出"], "target": node_idx["株式"], "value": abs(mmf_flow) * 0.6})
+        links.append({"source": node_idx["MMF流出"], "target": node_idx["債券"], "value": abs(mmf_flow) * 0.4})
+
+    # ドル安 → 新興国・商品・欧州
+    dxy = data.get("米ドル指数 (DXY)")
+    dxy_flow = -calc_flow_score(dxy, 30) if dxy is not None else 0.0  # ドル安=他通貨高
+    if dxy_flow > 0:
+        links.append({"source": node_idx["ドル安"], "target": node_idx["株式"], "value": abs(dxy_flow) * 0.4})
+        links.append({"source": node_idx["ドル安"], "target": node_idx["商品"], "value": abs(dxy_flow) * 0.35})
+        links.append({"source": node_idx["ドル安"], "target": node_idx["債券"], "value": abs(dxy_flow) * 0.25})
+
+    # ステーブル流入 → 暗号資産
+    stable = data.get("ステーブルコイン時価総額 ($B)")
+    stable_flow = calc_flow_score(stable, 30) if stable is not None else 0.0
+    if stable_flow > 0:
+        links.append({"source": node_idx["ステーブル流入"], "target": node_idx["暗号資産"], "value": abs(stable_flow)})
+
+    # VIX低下 → 株式・不動産
+    vix = data.get("VIX (株式恐怖指数)")
+    vix_flow = -calc_flow_score(vix, 30) if vix is not None else 0.0  # VIX低下=リスクオン
+    if vix_flow > 0:
+        links.append({"source": node_idx["VIX低下"], "target": node_idx["株式"], "value": abs(vix_flow) * 0.7})
+        links.append({"source": node_idx["VIX低下"], "target": node_idx["不動産"], "value": abs(vix_flow) * 0.3})
+
+    # 資産クラス→地域のリンク
+    class_to_region: dict[str, list[tuple[str, float]]] = {
+        "株式": [("北米", 0.25), ("欧州", 0.20), ("日本", 0.10), ("アジア", 0.20), ("ラテン", 0.10), ("大洋州", 0.05), ("新興国", 0.10)],
+        "債券": [("北米", 0.50), ("欧州", 0.25), ("新興国", 0.15), ("先進国", 0.10)],
+        "商品": [("グローバル", 1.0)],
+        "暗号資産": [("グローバル", 1.0)],
+        "不動産": [("北米", 0.60), ("欧州", 0.25), ("アジア", 0.15)],
+        "現金待機": [("グローバル", 1.0)],
+    }
+
+    for cls, score in class_scores.items():
+        if score <= 0 or cls not in class_to_region:
+            continue
+        for region, weight in class_to_region[cls]:
+            links.append({
+                "source": node_idx[cls],
+                "target": node_idx[region],
+                "value": abs(score) * weight,
+            })
+
+    # 個別資産スコアも返す（ヒートマップ用）
+    return {
+        "nodes": all_nodes,
+        "links": links,
+        "scores": asset_scores,
+        "class_scores": class_scores,
+        "region_scores": region_scores,
+    }
+
+
+def build_flow_heatmap(data: dict[str, pd.Series]) -> list[dict]:
+    """世界マネー・ヒートマップ用データ（地域×資産クラス）。"""
+    rows: list[dict] = []
+    regions = ["北米", "欧州", "日本", "アジア", "ラテン", "大洋州", "新興国", "グローバル"]
+    classes = ["株式", "債券", "商品", "暗号資産", "不動産"]
+
+    for label, score in build_sankey_flow(data)["scores"].items():
+        region = ASSET_REGION_MAP.get(label, "グローバル")
+        cls = ASSET_CLASS_MAP.get(label, "株式")
+        rows.append({
+            "asset": label.split(" (")[0],
+            "region": region,
+            "class": cls,
+            "score": score,
+            "return_1m": period_return(data.get(label), 30) or 0.0,
         })
+    return rows
 
-    # --- ① リスク資産 -------------------------------------------------------
-    for (key, label), color in zip(RISK_ASSETS, RISK_COLORS):
+
+def build_rotation_wheel(data: dict[str, pd.Series]) -> dict:
+    """資産ローテーション・ホイール用データ。"""
+    flow = build_sankey_flow(data)
+    classes = ["株式", "債券", "商品", "暗号資産", "不動産"]
+    values = [max(0, flow["class_scores"].get(c, 0)) for c in classes]
+    total = sum(values) or 1.0
+    return {
+        "labels": classes,
+        "values": [v / total * 100 for v in values],
+        "colors": ["#38bdf8", "#818cf8", "#fbbf24", "#f472b6", "#34d399"],
+    }
+
+
+# =============================================================================
+# F. チャートグループ（タブ切替式・スクロール不要のライブボード用）
+# =============================================================================
+CHART_GROUPS: list[dict] = [
+    {
+        "key": "risk",
+        "label": "リスク資産",
+        "caption": "起点＝100で正規化",
+        "y1": "指数（起点=100）",
+        "y2": None,
+        "hline": 100.0,
+        "series": [
+            ("ビットコイン (BTC)", "#f7931a"),
+            ("米国株 (S&P 500)", "#38bdf8"),
+            ("日本株 (日経平均)", "#fb7185"),
+            ("欧州株 (EURO STOXX 50)", "#a78bfa"),
+            ("ゴールド (Gold)", "#fbbf24"),
+        ],
+        "normalize": True,
+    },
+    {
+        "key": "stress",
+        "label": "ストレス",
+        "caption": "DXY／VIX／債券ボラ",
+        "y1": "DXY（左軸）",
+        "y2": "VIX・債券ボラ bp（右軸）",
+        "hline": None,
+        "series": [
+            ("米ドル指数 (DXY)", "#e9eefa", "y", 2.2, None, False),
+            ("VIX (株式恐怖指数)", "#fb7185", "y2", 1.7, "dot", False),
+            ("米国債ボラティリティ (bp)", "#a78bfa", "y2", 1.5, "solid", False),
+        ],
+        "normalize": False,
+    },
+    {
+        "key": "credit",
+        "label": "暗号資産・信用",
+        "caption": "ステーブルコイン／HYスプレッド",
+        "y1": "ステーブルコイン（十億ドル）",
+        "y2": "HYスプレッド %（右軸）",
+        "hline": None,
+        "series": [
+            ("ステーブルコイン時価総額 ($B)", "#34d399", "y", 2.2,
+             None, True),
+            ("ハイイールド債スプレッド (%)", "#fb923c", "y2", 1.8, "solid", False),
+        ],
+        "normalize": False,
+    },
+    {
+        "key": "liquidity",
+        "label": "流動性",
+        "caption": "M2／MMF",
+        "y1": "米国M2（十億ドル）",
+        "y2": "MMF残高（十億ドル・右軸）",
+        "hline": None,
+        "series": [
+            ("米国M2 ($B)", "#22d3ee", "y", 2.2, None, False),
+            ("米国MMF残高 ($B)", "#818cf8", "y2", 2.2, "solid", False),
+        ],
+        "normalize": False,
+    },
+]
+
+# 指標スナップショット（右カラム）に並べる系列と表示形式
+SNAPSHOT_SERIES: list[tuple[str, str, int]] = [
+    ("ビットコイン (BTC)", "", 0),
+    ("米国株 (S&P 500)", "", 0),
+    ("日本株 (日経平均)", "", 0),
+    ("欧州株 (EURO STOXX 50)", "", 0),
+    ("ゴールド (Gold)", "", 0),
+    ("米ドル指数 (DXY)", "", 1),
+    ("VIX (株式恐怖指数)", "", 2),
+    ("ハイイールド債スプレッド (%)", " %", 2),
+    ("米国債ボラティリティ (bp)", " bp", 1),
+    ("ステーブルコイン時価総額 ($B)", " B$", 1),
+    ("米国M2 ($B)", " B$", 0),
+    ("米国MMF残高 ($B)", " B$", 0),
+]
+
+
+def _series_to_points(s: pd.Series, limit: int = 260) -> tuple[list[str], list[float]]:
+    """Plotly 用に (日付文字列リスト, 数値リスト) へ変換する。長い系列は間引く。"""
+    if s is None or s.empty:
+        return [], []
+    step = max(1, len(s) // limit)
+    sub = s.iloc[::step]
+    if sub.index[-1] != s.index[-1]:
+        sub = pd.concat([sub, s.iloc[[-1]]])
+    dates = [d.strftime("%Y-%m-%d") for d in sub.index]
+    values = [round(float(v), 4) for v in sub.values]
+    return dates, values
+
+
+def build_chart_payload(data: dict[str, pd.Series]) -> list[dict]:
+    """タブごとのチャート定義を作る。"""
+    groups: list[dict] = []
+    for spec in CHART_GROUPS:
+        traces: list[dict] = []
+        for item in spec["series"]:
+            if len(item) == 2:
+                label, color = item
+                axis, width, dash, fill = "y", 2.2, None, False
+            else:
+                label, color, axis, width, dash, fill = item
+            s = data.get(label)
+            if s is None or s.empty:
+                continue
+            ys = normalize_100(s) if spec["normalize"] else s
+            dates, values = _series_to_points(ys)
+            if not dates:
+                continue
+            traces.append({
+                "name": label.split(" (")[0] if spec["normalize"] else label,
+                "dates": dates,
+                "values": values,
+                "color": color,
+                "width": width,
+                "dash": dash or "solid",
+                "axis": axis,
+                "fill": fill,
+                "fillcolor": "rgba(52,211,153,.10)" if fill else None,
+                "markers": label.startswith("米国MMF"),
+            })
+        if traces:
+            groups.append({
+                "key": spec["key"],
+                "label": spec["label"],
+                "caption": spec["caption"],
+                "y1": spec["y1"],
+                "y2": spec["y2"],
+                "hline": spec["hline"],
+                "traces": traces,
+            })
+    return groups
+
+
+def _spark_svg(s: pd.Series, up_color: str = "#34d399", down_color: str = "#fb7185") -> str:
+    """右カラム用のミニスパークライン（SVG）を作る。"""
+    if s is None or len(s) < 3:
+        return ""
+    tail = s.tail(48)
+    lo, hi = float(tail.min()), float(tail.max())
+    if hi == lo:
+        hi = lo + 1.0
+    w, h = 66.0, 16.0
+    n = len(tail)
+    pts = []
+    for i, v in enumerate(tail.values):
+        x = (i / (n - 1)) * w
+        y = h - ((float(v) - lo) / (hi - lo)) * (h - 2.0) - 1.0
+        pts.append(f"{x:.1f},{y:.1f}")
+    color = up_color if tail.iloc[-1] >= tail.iloc[0] else down_color
+    return (f'<svg class="spark" viewBox="0 0 66 16" preserveAspectRatio="none">'
+            f'<polyline points="{" ".join(pts)}" fill="none" stroke="{color}" '
+            f'stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/></svg>')
+
+
+
+def _num(v: Optional[float], unit: str = "", digits: int = 0) -> str:
+    """符号付き数値の整形（未取得はダッシュ）。"""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "—"
+    return f"{v:+,.{digits}f}{unit}"
+
+
+def _chip(v: Optional[float], digits: int = 2) -> str:
+    if v is None:
+        return '<span class="chip ghost">—</span>'
+    cls = "up" if v > 0.0001 else ("down" if v < -0.0001 else "flat")
+    return f'<span class="chip {cls}">{v:+.{digits}f}%</span>'
+
+
+def render_snapshot(data: dict[str, pd.Series]) -> str:
+    """右カラム: 指標スナップショット（最新値＋1ヶ月比＋スパークライン）。"""
+    out: list[str] = []
+    for label, unit, digits in SNAPSHOT_SERIES:
         s = data.get(label)
         if s is None or s.empty:
             continue
-        norm = normalize_100(s)
-        if norm.empty:
-            continue
-        fig.add_trace(
-            go.Scatter(x=norm.index, y=norm.values, name=label, mode="lines",
-                       line=dict(width=2.2, color=color),
-                       hovertemplate="%{y:.1f}<extra>" + label + "</extra>"),
-            row=1, col=1,
+        d1m = period_return(s, 30)
+        name = label.replace(" ($B)", "").replace(" (%)", "").replace(" (bp)", "")
+        out.append(
+            f'<div class="mrow">'
+            f'<div class="nm">{html_lib.escape(name)}</div>'
+            f'<div class="vl">{_fmt(s.iloc[-1], unit, digits)}</div>'
+            f'<div class="rt">{_spark_svg(s)}{_chip(d1m)}</div>'
+            f'</div>'
         )
-        add_card(label, s)
-    fig.add_hline(y=100, line=dict(color="#9ca3af", width=1, dash="dash"),
-                  row=1, col=1)
+    return "\n".join(out)
 
-    # --- ② ストレス指標 -----------------------------------------------------
-    dxy = data.get("米ドル指数 (DXY)")
-    vix = data.get("VIX (株式恐怖指数)")
-    bondvol = data.get("米国債ボラティリティ (bp)")
 
-    if dxy is not None and not dxy.empty:
-        fig.add_trace(go.Scatter(x=dxy.index, y=dxy.values, name="米ドル指数 (DXY)",
-                                 line=dict(color="#111827", width=2.2)),
-                      row=2, col=1, secondary_y=False)
-        add_card("米ドル指数 (DXY)", dxy, "", 1)
-    if vix is not None and not vix.empty:
-        fig.add_trace(go.Scatter(x=vix.index, y=vix.values, name="VIX（株式恐怖指数）",
-                                 line=dict(color="#ef4444", width=1.6, dash="dot")),
-                      row=2, col=1, secondary_y=True)
-        add_card("VIX（株式恐怖指数）", vix, "", 2)
-    if bondvol is not None and not bondvol.empty:
-        fig.add_trace(go.Scatter(x=bondvol.index, y=bondvol.values,
-                                 name="米国債ボラティリティ（20日・bp）",
-                                 line=dict(color="#8b5cf6", width=1.6)),
-                      row=2, col=1, secondary_y=True)
+def _heat_bg(v: Optional[float]) -> str:
+    """騰落率に応じたセル背景色（ヒートマップ風）。"""
+    if v is None:
+        return ""
+    cap = 25.0
+    a = min(abs(v) / cap, 1.0)
+    alpha = 0.10 + a * 0.55
+    rgb = "52,211,153" if v > 0 else "251,113,133"
+    return f' style="background:rgba({rgb},{alpha:.2f})"'
 
-    fig.update_yaxes(title_text="DXY", row=2, col=1, secondary_y=False,
-                     title_font=dict(size=11), automargin=True)
-    fig.update_yaxes(title_text="VIX ／ 債券ボラ（bp）", row=2, col=1, secondary_y=True,
-                     title_font=dict(size=11), automargin=True)
 
-    # --- ③ ステーブルコインと信用スプレッド ---------------------------------
-    stable = data.get("ステーブルコイン時価総額 ($B)")
-    hy = data.get("ハイイールド債スプレッド (%)")
+def render_heat(rows: list[dict]) -> str:
+    """中央下: 期間別パフォーマンスのヒート表（変化率を持つ系列のみ）。"""
+    rows = [
+        r for r in rows
+        if r["values"].get("all") is not None
+        or any(v is not None for v in r["values"].values())
+    ]
+    if not rows:
+        return '<p style="margin:0;font-size:11px;color:#6f819a">表示できるデータがありません。</p>'
+    head = ['<tr><th>指標</th><th>直近値</th>']
+    for _k, lab, _d in PERIOD_LABELS:
+        head.append(f"<th>{lab}</th>")
+    head.append("<th>全期間</th></tr>")
 
-    if stable is not None and not stable.empty:
-        fig.add_trace(go.Scatter(x=stable.index, y=stable.values,
-                                 name="ステーブルコイン時価総額（$B）",
-                                 fill="tozeroy", fillcolor="rgba(16,185,129,0.14)",
-                                 line=dict(color="#10b981", width=2.2)),
-                      row=3, col=1, secondary_y=False)
-        add_card("ステーブルコイン時価総額", stable, " B$", 1)
-    if hy is not None and not hy.empty:
-        fig.add_trace(go.Scatter(x=hy.index, y=hy.values,
-                                 name="ハイイールド債スプレッド（%）",
-                                 line=dict(color="#f97316", width=1.9)),
-                      row=3, col=1, secondary_y=True)
-        add_card("ハイイールド債スプレッド", hy, " %", 2)
+    body: list[str] = []
+    for r in rows:
+        cells = [f'<td>{html_lib.escape(r["label"].split(" (")[0])}</td>',
+                 f'<td>{r["last"]}</td>']
+        for k, _lab, _d in PERIOD_LABELS:
+            v = r["values"].get(k)
+            if v is None:
+                cells.append('<td class="na">—</td>')
+            else:
+                cls = "pos" if v > 0 else "neg"
+                cells.append(f'<td class="h {cls}"{_heat_bg(v)}>{v:+.1f}</td>')
+        allv = r["values"].get("all")
+        if allv is None:
+            cells.append('<td class="na">—</td>')
+        else:
+            cls = "pos" if allv > 0 else "neg"
+            cells.append(f'<td class="h {cls}"{_heat_bg(allv)}>{allv:+.1f}</td>')
+        body.append("<tr>" + "".join(cells) + "</tr>")
+    return ('<table class="heat"><thead>' + "".join(head) + "</thead><tbody>"
+            + "\n".join(body) + "</tbody></table>")
 
-    fig.update_yaxes(title_text="ステーブルコイン（$B）", row=3, col=1, secondary_y=False,
-                     title_font=dict(size=11), automargin=True)
-    fig.update_yaxes(title_text="HYスプレッド（%）", row=3, col=1, secondary_y=True,
-                     title_font=dict(size=11), automargin=True)
 
-    # --- ④ M2 と MMF --------------------------------------------------------
-    m2 = data.get("米国M2 ($B)")
-    mmf = data.get("米国MMF残高 ($B)")
+def render_reasons(reasons: list[tuple[str, bool]]) -> str:
+    out = []
+    for text, positive in reasons:
+        cls = "on" if positive else "off"
+        out.append(f'        <li class="{cls}">{html_lib.escape(text)}</li>')
+    return "\n".join(out)
 
-    if m2 is not None and not m2.empty:
-        fig.add_trace(go.Scatter(x=m2.index, y=m2.values, name="米国M2（$B）",
-                                 line=dict(color="#0284c7", width=2.2)),
-                      row=4, col=1, secondary_y=False)
-        add_card("米国M2マネーサプライ", m2, " B$", 0)
-    if mmf is not None and not mmf.empty:
-        fig.add_trace(go.Scatter(x=mmf.index, y=mmf.values, name="米国MMF残高（$B）",
-                                 mode="lines+markers", marker=dict(size=6),
-                                 line=dict(color="#6366f1", width=2.2)),
-                      row=4, col=1, secondary_y=True)
-        add_card("米国MMF残高", mmf, " B$", 0)
 
-    fig.update_yaxes(title_text="米国M2（$B）", row=4, col=1, secondary_y=False,
-                     title_font=dict(size=11), automargin=True)
-    fig.update_yaxes(title_text="MMF（$B）", row=4, col=1, secondary_y=True,
-                     title_font=dict(size=11), automargin=True)
+def render_ticker(data: dict[str, pd.Series]) -> str:
+    """ヘッダー下を流れる相場テープ（2周ぶん並べて継ぎ目を消す）。"""
+    items: list[str] = []
+    for label, _unit, digits in SNAPSHOT_SERIES:
+        s = data.get(label)
+        if s is None or s.empty:
+            continue
+        d1 = _pct_change_n(s, 1)
+        cls = "up" if (d1 or 0) > 0.0001 else ("down" if (d1 or 0) < -0.0001 else "flat")
+        txt = "—" if d1 is None else f"{d1:+.2f}%"
+        name = label.split(" (")[0]
+        items.append(
+            f'<span>{html_lib.escape(name)} <b>{_fmt(s.iloc[-1], "", digits)}</b>'
+            f'<em class="{cls}">{txt}</em></span>'
+        )
+    return "".join(items) + "".join(items)
 
-    if not fig.data:
-        fig.add_annotation(
-            text="データを取得できませんでした（ネットワークまたは各APIの状態をご確認ください）",
-            xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
-            font=dict(size=16, color="#dc2626"),)
 
-    fig.update_layout(
-        height=1580,
-        template="plotly_white",
-        hovermode="x unified",
-        hoverlabel=dict(font_size=12, font_family=FONT_STACK),
-        legend=dict(orientation="h", yanchor="bottom", y=1.045, xanchor="left", x=0,
-                    font=dict(size=11.5), bgcolor="rgba(255,255,255,0.9)"),
-        margin=dict(l=28, r=28, t=118, b=46),
-        font=dict(family=FONT_STACK, size=12.5, color="#111827"),
-        paper_bgcolor="#ffffff",
-        plot_bgcolor="#ffffff",
-        dragmode="pan",
-    )
+def render_status_grid() -> tuple[str, str]:
+    """データ取得状況のコンパクト表示。"""
+    if not FETCH_STATUS:
+        return "—", '<div class="sitem"><span class="dot ng"></span><span>取得状況を記録できませんでした</span></div>'
+    items = []
+    for item in FETCH_STATUS:
+        cls = "ok" if item["ok"] else "ng"
+        label = html_lib.escape(item["label"].split(" (")[0])
+        items.append(f'<div class="sitem" title="{html_lib.escape(item["source"])}／'
+                     f'{html_lib.escape(item["detail"])}">'
+                     f'<span class="dot {cls}"></span><span>{label}</span></div>')
+    ng = sum(1 for x in FETCH_STATUS if not x["ok"])
+    summary = f"全{len(FETCH_STATUS)}系列／失敗{ng}件" if ng else f"全{len(FETCH_STATUS)}系列OK"
+    return summary, "\n".join(items)
 
-    # 期間切り替えボタン（共有X軸の最下段）
-    fig.update_xaxes(
-        rangeselector=dict(
-            buttons=[
-                dict(count=1, label="1ヶ月", step="month", stepmode="backward"),
-                dict(count=3, label="3ヶ月", step="month", stepmode="backward"),
-                dict(count=6, label="6ヶ月", step="month", stepmode="backward"),
-                dict(count=1, label="1年", step="year", stepmode="backward"),
-                dict(step="all", label="全期間"),
-            ],
-            bgcolor="#f1f3f5", activecolor="#d1d5db",
-            font=dict(color="#111827", size=11.5), y=1.28,
-        ),
-        row=4, col=1,
-    )
-    fig.update_xaxes(showgrid=True, gridcolor="rgba(17,24,39,0.07)",
-                     showline=True, linecolor="rgba(17,24,39,0.15)", ticks="outside",
-                     tickfont=dict(size=11.5))
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(17,24,39,0.07)",
-                     tickfont=dict(size=11.5), zeroline=False)
 
-    # サブプロットタイトルを左寄せ・大きめにして重なりを避ける
-    for ann in fig.layout.annotations:
-        ann.update(x=0.0, xanchor="left", font=dict(size=14, color="#111827"))
-    return fig, cards
+def build_live_board(data: dict[str, pd.Series], analysis: dict) -> dict:
+    """タブ・ゲージ・スナップショット等の表示用データをまとめる。"""
+    groups = build_chart_payload(data)
+    status_summary, status_items = render_status_grid()
+    score, total = analysis["score"], analysis["total"]
+    ratio = (score / total) if total else 0.0
+    return {
+        "groups": groups,
+        "snapshot": render_snapshot(data),
+        "heat": render_heat(analysis["table"]),
+        "reasons": render_reasons(analysis["reasons"]),
+        "ticker": render_ticker(data),
+        "status": status_items,
+        "status_summary": status_summary,
+        "score": score,
+        "total": total,
+        "ratio": round(ratio, 4),
+        "regime": html_lib.escape(analysis["regime_label"]),
+        "stress": html_lib.escape(analysis["stress_text"]),
+    }
 
 
 # =============================================================================
 # G. HTML出力
 # =============================================================================
-HTML_TEMPLATE = """<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Global Money Flow &amp; Market Dashboard</title>
-<style>
-  :root {
-    --bg: #f4f6f8;
-    --panel: #ffffff;
-    --ink: #0f172a;
-    --ink-2: #334155;
-    --muted: #64748b;
-    --line: #e2e8f0;
-    --up: #047857;
-    --up-bg: #ecfdf5;
-    --down: #b91c1c;
-    --down-bg: #fef2f2;
-    --flat: #475569;
-    --accent: #0f766e;
-    --radius: 12px;
-  }
-  * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
-  body {
-    margin: 0;
-    padding: 26px 22px 44px;
-    background: var(--bg);
-    color: var(--ink);
-    font-family: 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', 'Yu Gothic UI',
-                 'Yu Gothic', 'Meiryo', 'Noto Sans JP', 'Segoe UI', sans-serif;
-    font-size: 14px;
-    line-height: 1.7;
-    font-feature-settings: "palt" 0;
-    -webkit-font-smoothing: antialiased;
-  }
-  .wrap { max-width: 1400px; margin: 0 auto; }
-
-  /* ---------- ヘッダー ---------- */
-  header.top {
-    display: flex; flex-wrap: wrap; align-items: flex-end;
-    justify-content: space-between; gap: 10px 20px;
-    padding-bottom: 14px; margin-bottom: 18px;
-    border-bottom: 1px solid var(--line);
-  }
-  h1 {
-    font-size: 23px; line-height: 1.35; margin: 0; letter-spacing: .01em;
-    font-weight: 700;
-  }
-  h1 .sub { display: block; font-size: 12.5px; font-weight: 500; color: var(--muted); margin-top: 4px; }
-  .stamp { font-size: 12.5px; color: var(--muted); line-height: 1.9; }
-  .stamp b { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
-
-  /* ---------- セクション見出し ---------- */
-  h2.sec {
-    display: flex; align-items: center; gap: 9px;
-    font-size: 15px; margin: 0 0 11px; font-weight: 700; letter-spacing: .01em;
-  }
-  h2.sec::before {
-    content: ""; width: 4px; height: 16px; border-radius: 2px;
-    background: var(--accent); flex: 0 0 auto;
-  }
-  h2.sec .hint { font-size: 11.5px; font-weight: 500; color: var(--muted); }
-  section.block { margin: 0 0 20px; }
-
-  /* ---------- カード ---------- */
-  .cards {
-    display: grid; gap: 11px;
-    grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
-  }
-  .card {
-    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-    padding: 12px 14px 11px;
-    box-shadow: 0 1px 2px rgba(15,23,42,.04), 0 6px 16px -14px rgba(15,23,42,.35);
-  }
-  .card .label {
-    font-size: 11.5px; color: var(--muted); line-height: 1.45;
-    min-height: 2.9em; font-weight: 600;
-  }
-  .card .value {
-    font-size: 20px; font-weight: 700; margin: 1px 0 7px;
-    font-variant-numeric: tabular-nums; letter-spacing: -.01em;
-  }
-  .card .deltas { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--muted); }
-  .card .deltas span.row { display: flex; justify-content: space-between; gap: 6px; }
-  .card .deltas .k { flex: 0 0 auto; }
-  .card .when { margin-top: 6px; font-size: 10.5px; color: #94a3b8; font-variant-numeric: tabular-nums; }
-
-  .up { color: var(--up); font-weight: 700; font-variant-numeric: tabular-nums; }
-  .down { color: var(--down); font-weight: 700; font-variant-numeric: tabular-nums; }
-  .flat { color: var(--flat); font-weight: 600; font-variant-numeric: tabular-nums; }
-  .pill { font-weight: 700; }
-
-  /* ---------- 分析パネル ---------- */
-  .analysis { display: grid; gap: 13px; grid-template-columns: 1fr 1fr; }
-  @media (max-width: 980px) { .analysis { grid-template-columns: 1fr; } }
-  .panel {
-    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-    padding: 15px 16px; box-shadow: 0 1px 2px rgba(15,23,42,.04);
-  }
-  .panel h3 {
-    font-size: 13px; margin: 0 0 10px; color: var(--ink);
-    font-weight: 700; letter-spacing: .01em;
-  }
-  .regime {
-    display: inline-flex; align-items: baseline; gap: 8px;
-    padding: 7px 12px; border-radius: 8px; margin-bottom: 11px;
-    background: #f1f5f9; border: 1px solid var(--line);
-  }
-  .regime .txt { font-size: 14px; font-weight: 700; }
-  .regime .scr { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .meter { height: 6px; background: #e8edf2; border-radius: 3px; overflow: hidden; margin: 0 0 12px; }
-  .meter > i { display: block; height: 100%; background: linear-gradient(90deg,#0ea5a4,#0f766e); }
-  ul.reasons { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
-  ul.reasons li {
-    font-size: 12.8px; line-height: 1.65; color: var(--ink-2);
-    padding-left: 17px; position: relative;
-  }
-  ul.reasons li::before {
-    content: ""; position: absolute; left: 4px; top: .62em;
-    width: 6px; height: 6px; border-radius: 50%; background: #94a3b8;
-  }
-  .note { font-size: 12.5px; color: var(--ink-2); line-height: 1.75; margin: 0 0 8px; }
-  .kv { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; font-size: 12.5px; }
-  .kv dt { color: var(--muted); font-weight: 600; }
-  .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
-
-  /* ---------- 表 ---------- */
-  .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  table.perf {
-    width: 100%; border-collapse: collapse; font-size: 12.8px;
-    font-variant-numeric: tabular-nums; min-width: 720px;
-  }
-  table.perf th, table.perf td {
-    padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--line);
-    white-space: nowrap;
-  }
-  table.perf th {
-    font-size: 11.5px; color: var(--muted); font-weight: 700;
-    background: #f8fafc; position: sticky; top: 0; text-align: right;
-  }
-  table.perf th:first-child, table.perf td:first-child {
-    text-align: left; position: sticky; left: 0; background: var(--panel); z-index: 1;
-  }
-  table.perf th:first-child { background: #f8fafc; }
-  table.perf tbody tr:hover td { background: #f9fbfc; }
-  table.perf td.last { font-weight: 700; }
-  table.perf .sep td { border-top: 2px solid var(--line); }
-
-  /* ---------- チャート ---------- */
-  .chart {
-    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-    padding: 6px 6px 2px; overflow: hidden;
-  }
-  .js-plotly-plot .plotly .modebar { opacity: .55; }
-
-  /* ---------- 取得状況 ---------- */
-  details.status {
-    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-    padding: 11px 15px;
-  }
-  details.status > summary {
-    cursor: pointer; font-size: 12.5px; color: var(--ink-2); font-weight: 600;
-    list-style: none; display: flex; align-items: center; gap: 8px;
-  }
-  details.status > summary::-webkit-details-marker { display: none; }
-  details.status > summary::before { content: "▶"; font-size: 9px; color: var(--muted); }
-  details.status[open] > summary::before { content: "▼"; }
-  .statuslist {
-    list-style: none; margin: 11px 0 0; padding: 0;
-    display: grid; gap: 5px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  }
-  .statuslist li { font-size: 11.8px; display: flex; gap: 7px; align-items: baseline; flex-wrap: wrap; }
-  .tag { font-weight: 700; font-size: 10.5px; padding: 1px 6px; border-radius: 4px; flex: 0 0 auto; }
-  .tag.ok { background: var(--up-bg); color: var(--up); }
-  .tag.ng { background: var(--down-bg); color: var(--down); }
-  .statuslist .src { color: var(--muted); }
-
-  footer {
-    margin-top: 18px; color: var(--muted); font-size: 11.5px; line-height: 1.85;
-    border-top: 1px solid var(--line); padding-top: 13px;
-  }
-  footer code { background: #eef2f6; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
-
-  @media (max-width: 700px) {
-    body { padding: 16px 12px 30px; font-size: 13.5px; }
-    h1 { font-size: 18px; }
-    .cards { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 9px; }
-    .card .value { font-size: 17px; }
-    .card .label { min-height: 0; }
-  }
-  @media print {
-    body { background: #fff; padding: 0; }
-    .chart, .panel, .card, details.status { box-shadow: none; }
-    details.status { break-inside: avoid; }
-    details.status > summary { list-style: none; }
-    @page { size: A4 landscape; margin: 12mm; }
-  }
-</style>
-</head>
-<body>
-<div class="wrap">
-  <header class="top">
-    <h1>Global Money Flow &amp; Market Dashboard
-      <span class="sub">世界の資金フロー定点観測 — リスク資産・ストレス指標・流動性を4層で可視化</span>
-    </h1>
-    <div class="stamp">
-      最終更新: <b>__UPDATED_AT__</b><br>
-      観測期間: <b>__PERIOD__</b>（リスク資産は起点＝100で正規化）
-    </div>
-  </header>
-
-  <section class="block">
-    <h2 class="sec">最新値 <span class="hint">前回比は直前データ、1ヶ月比は30日前との比較</span></h2>
-    <div class="cards">__CARDS__</div>
-  </section>
-
-  <section class="block">
-    <h2 class="sec">自動分析 <span class="hint">数値から機械的に判定（投資助言ではありません）</span></h2>
-    <div class="analysis">__ANALYSIS__</div>
-  </section>
-
-  <section class="block">
-    <h2 class="sec">期間別パフォーマンス <span class="hint">直近データ日から各期間前との騰落率</span></h2>
-    <div class="panel">
-      <div class="tablewrap">__TABLE__</div>
-    </div>
-  </section>
-
-  <section class="block">
-    <h2 class="sec">チャート <span class="hint">ドラッグで移動／ホイールで拡大／右上のボタンで期間切替</span></h2>
-    <div class="chart">__PLOT__</div>
-  </section>
-
-  <section class="block">
-    <details class="status"__OPEN__>
-      <summary>データ取得状況（今回の実行結果）__STATUS_SUMMARY__</summary>
-      <ul class="statuslist">__STATUS__</ul>
-    </details>
-  </section>
-
-  <footer>
-    <b>データ出所</b>: Yahoo Finance（yfinance）／ FRED（米セントルイス連銀）／ DefiLlama。すべてAPIキー不要の公開データを利用しています。<br>
-    <b>指標の定義</b>: リスク資産は観測期間の初日を100として正規化。米国債ボラティリティは、Yahoo Finance の <code>^MOVE</code> が ICE BofA MOVE 指数ではないため、FRED の米10年債利回り（DGS10）の日次変化から20営業日の標準偏差（bp）を算出した代替指標です。M2は週次・10億ドル、MMFは四半期・百万ドルを1,000で割って10億ドル表示に換算しています。<br>
-    <b>ご注意</b>: 本ページは情報提供のみを目的とした定点観測用ダッシュボードであり、投資助言・勧誘ではありません。数値はデータ提供元の定義改定や遅延により変動・欠損することがあります。
-  </footer>
-</div>
-</body>
-</html>
-"""
-
-CARD_TEMPLATE = """      <div class="card">
-        <div class="label">__LABEL__</div>
-        <div class="value">__VALUE__</div>
-        <div class="deltas">
-          <span class="row"><span class="k">前回比</span>__D1__</span>
-          <span class="row"><span class="k">1ヶ月比</span>__D1M__</span>
-        </div>
-        <div class="when">基準日 __DATE__</div>
-      </div>"""
-
-STATUS_TEMPLATE = """        <li><span class="tag __CLASS__">__TAG__</span><span>__LABEL__</span><span class="src">（__SOURCE__）__DETAIL__</span></li>"""
-
-
-def _delta_cell(v: Optional[float]) -> str:
-    if v is None:
-        return '<span class="flat">—</span>'
-    cls = "up" if v > 0.0001 else ("down" if v < -0.0001 else "flat")
-    return f'<span class="{cls}">{v:+,.2f}%</span>'
-
-
-def _num(v: Optional[float], unit: str = "", digits: int = 0) -> str:
-    if v is None:
-        return "—"
-    return f"{v:+,.{digits}f}{unit}"
-
-
-def render_cards(cards: list[dict]) -> str:
-    if not cards:
-        return '      <div class="card"><div class="label">データなし</div><div class="value">—</div></div>'
-    out = []
-    for c in cards:
-        out.append(
-            CARD_TEMPLATE.replace("__LABEL__", c["label"])
-            .replace("__VALUE__", c["value"])
-            .replace("__D1__", _delta_cell(c["d1"]))
-            .replace("__D1M__", _delta_cell(c["d1m"]))
-            .replace("__DATE__", c["date"])
-        )
-    return "\n".join(out)
-
-
-def render_analysis(analysis: dict) -> str:
-    # --- パネル1: 地合い判定 ---
-    score, total = analysis["score"], analysis["total"]
-    pct = (score / total * 100) if total else 0
-    reasons_html = "\n".join(f"        <li>{r}</li>" for r in analysis["reasons"])
-    panel1 = f"""      <div class="panel">
-        <h3>地合い判定（リスクオン／オフのスコアリング）</h3>
-        <div class="regime"><span class="txt">{analysis['regime_label']}</span><span class="scr">{score} / {total} 項目がリスクオン</span></div>
-        <div class="meter"><i style="width:{pct:.0f}%"></i></div>
-        <ul class="reasons">
-{reasons_html}
-        </ul>
-      </div>"""
-
-    # --- パネル2: ストレス・リスク・流動性 ---
-    stress = analysis["stress_text"]
-    best, worst = analysis["best"], analysis["worst"]
-    lead = ""
-    if best and worst:
-        lead = (f"<p class=\"note\">観測期間の騰落率は <b>{best[0]}</b> が {best[1]:+.2f}% で最も強く、"
-                f"<b>{worst[0]}</b> が {worst[1]:+.2f}% で最も弱い結果です。</p>")
-
-    risk_rows = []
-    for m in analysis["risk_metrics"]:
-        risk_rows.append(
-            f"<dt>{m['label']}</dt><dd>{_num(m['vol'], '%', 1)}<span style=\"color:#94a3b8\">（年率ボラ）</span> ／ "
-            f"{_num(m['mdd'], '%', 1)}<span style=\"color:#94a3b8\">（最大DD）</span> ／ "
-            f"{_num(m['sma_dev'], '%', 1)}<span style=\"color:#94a3b8\">（200日線乖離）</span></dd>"
-        )
-    liq_rows = []
-    for l in analysis["liquidity"]:
-        liq_rows.append(
-            f"<dt>{l['label']}</dt><dd>{l['level']} ／ 1ヶ月 {_num(l['d1m'], l['unit'], l['digits'])}"
-            f" ／ 3ヶ月 {_num(l['d3m'], l['unit'], l['digits'])}</dd>"
-        )
-
-    panel2 = f"""      <div class="panel">
-        <h3>市場ストレスと流動性の変化</h3>
-        <p class="note"><b>ストレス水準</b>: {stress}。</p>
-        {lead}
-        <dl class="kv">
-{chr(10).join('          ' + r for r in risk_rows)}
-        </dl>
-        <h3 style="margin-top:14px">流動性・待機資金の変化</h3>
-        <dl class="kv">
-{chr(10).join('          ' + r for r in liq_rows)}
-        </dl>
-      </div>"""
-    return panel1 + "\n" + panel2
-
-
-def render_table(rows: list[dict]) -> str:
-    if not rows:
-        return '<p class="note">表示できるデータがありません。</p>'
-    head = ("<tr><th>指標</th><th>直近値</th><th>基準日</th>"
-            + "".join(f"<th>{lab}</th>" for _k, lab, _d in PERIOD_LABELS)
-            + "<th>全期間</th></tr>")
-    body = []
-    prev_group_analysis = False
-    for r in rows:
-        cells = [f'<td>{r["label"]}</td>', f'<td class="last">{r["last"]}</td>', f'<td>{r["date"]}</td>']
-        for k, _lab, _d in PERIOD_LABELS:
-            cells.append(f"<td>{_delta_cell(r['values'].get(k))}</td>")
-        cells.append(f"<td>{_delta_cell(r['values'].get('all'))}</td>")
-        body.append("<tr>" + "".join(cells) + "</tr>")
-    return f"<table class=\"perf\">\n<thead>{head}</thead>\n<tbody>{chr(10).join(body)}</tbody>\n</table>"
-
-
-def render_status() -> tuple[str, str, str]:
-    if not FETCH_STATUS:
-        return ("", "",
-                '        <li><span class="tag ng">情報なし</span><span>取得状況を記録できませんでした</span></li>')
-    rows = []
-    for item in FETCH_STATUS:
-        ok = item["ok"]
-        rows.append(
-            STATUS_TEMPLATE.replace("__CLASS__", "ok" if ok else "ng")
-            .replace("__TAG__", "取得OK" if ok else "失敗")
-            .replace("__LABEL__", item["label"])
-            .replace("__SOURCE__", item["source"])
-            .replace("__DETAIL__", f" — {item['detail']}" if item["detail"] else "")
-        )
-    ng = sum(1 for x in FETCH_STATUS if not x["ok"])
-    summary = (f" — 全 {len(FETCH_STATUS)} 系列／失敗 {ng} 件" if ng else
-               f" — 全 {len(FETCH_STATUS)} 系列すべて取得OK")
-    return (" open" if ng else "", summary, "\n".join(rows))
-
-
-def write_dashboard(fig: go.Figure, cards: list[dict], analysis: dict,
-                    output_path: str = DEFAULT_OUTPUT,
+def write_dashboard(board: dict, output_path: str = DEFAULT_OUTPUT,
                     include_plotlyjs: str = "cdn") -> str:
-    """単一HTMLを書き出す。"""
+    """単一HTML（スクロール不要のライブボード）を書き出す。"""
     out_dir = os.path.dirname(output_path) or "."
     os.makedirs(out_dir, exist_ok=True)
 
-    plot_html = fig.to_html(
-        full_html=False, include_plotlyjs=include_plotlyjs,
-        config={"displayModeBar": True, "responsive": True, "displaylogo": False,
-                "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
-    )
-
     updated_at = datetime.now(JST).strftime("%Y-%m-%d %H:%M JST")
     period = f"{START_DATE} 〜 {datetime.now(JST).strftime('%Y-%m-%d')}"
-    open_attr, status_summary, status_rows = render_status()
+
+    tabs = []
+    plots = []
+    for i, g in enumerate(board["groups"]):
+        active = " active" if i == 0 else ""
+        tabs.append(f'<button class="tab{active}" data-i="{i}" type="button">'
+                    f'{html_lib.escape(g["label"])}</button>')
+        plots.append(f'<div class="plot" id="chart{i}" style="display:{"block" if i==0 else "none"}"></div>')
+
+    period_btns = "".join(
+        f'<button class="pbtn{" active" if p == "ALL" else ""}" data-p="{p}" type="button">{lab}</button>'
+        for p, lab in (("1M", "1M"), ("3M", "3M"), ("6M", "6M"), ("1Y", "1Y"), ("ALL", "全"))
+    )
+
+    payload = json.dumps({"groups": board["groups"]}, ensure_ascii=False,
+                         separators=(",", ":")).replace("</", "<\\/")
+
+    if include_plotlyjs == "cdn":
+        plotly_tag = ('<script src="https://cdn.plot.ly/plotly-%s.min.js" charset="utf-8"></script>'
+                      % po.get_plotlyjs_version())
+    else:
+        plotly_tag = "<script>%s</script>" % po.get_plotlyjs()
 
     html_doc = (
         HTML_TEMPLATE
         .replace("__UPDATED_AT__", updated_at)
         .replace("__PERIOD__", period)
-        .replace("__CARDS__", render_cards(cards))
-        .replace("__ANALYSIS__", render_analysis(analysis))
-        .replace("__TABLE__", render_table(analysis["table"]))
-        .replace("__STATUS_SUMMARY__", status_summary)
-        .replace("__STATUS__", status_rows)
-        .replace("__OPEN__", open_attr)
-        .replace("__PLOT__", plot_html)
+        .replace("__TICKER__", board["ticker"])
+        .replace("__SCORE__", str(board["score"]))
+        .replace("__TOTAL__", str(board["total"]))
+        .replace("__SCOREF__", str(board["score"]))
+        .replace("__RATIO__", str(board["ratio"]))
+        .replace("__REGIME__", board["regime"])
+        .replace("__REASONS__", board["reasons"])
+        .replace("__STRESS__", board["stress"])
+        .replace("__RISKM__", _render_risk_metrics(board))
+        .replace("__TABS__", "".join(tabs))
+        .replace("__PERIODBTN__", period_btns)
+        .replace("__CHARTS__", "".join(plots))
+        .replace("__HEAT__", board["heat"])
+        .replace("__METRICS__", board["snapshot"])
+        .replace("__STATUS_SUMMARY__", board["status_summary"])
+        .replace("__STATUS__", board["status"])
+        .replace("__FOOTER_LEFT__", "データ出所: Yahoo Finance（yfinance）／ FRED（米セントルイス連銀）／ DefiLlama — すべてAPIキー不要の公開データ")
+        .replace("__FOOTER_RIGHT__", f"本ページは情報提供のみを目的とした定点観測であり、投資助言・勧誘ではありません。　最終更新 {updated_at}")
+        .replace("__PAYLOAD__", payload)
+        .replace("__PLOTLYJS__", "")
+        .replace("<script></script>", plotly_tag)
     )
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_doc)
     return output_path
+
+
+def _render_risk_metrics(board: dict) -> str:
+    """左カラム下段: ボラティリティ・最大DD・200日線乖離のミニ表示。"""
+    rows: list[str] = []
+    for m in board.get("_risk_metrics", []):
+        rows.append(
+            f'<div class="mrow"><div class="nm">{html_lib.escape(m["label"].split(" (")[0])}</div>'
+            f'<div class="vl">{_num(m["sma_dev"], "%", 1)}</div>'
+            f'<div class="rt" style="gap:9px;color:#6f819a;font-size:10px">'
+            f'<span>ボラ {_num(m["vol"], "%", 0)}</span>'
+            f'<span>最大DD {_num(m["mdd"], "%", 1)}</span>'
+            f'<span>200日線 {_num(m["sma_dev"], "%", 1)}</span></div></div>'
+        )
+    return "\n".join(rows) if rows else '<div class="mrow"><div class="nm">—</div></div>'
 
 
 def build_dashboard(output_path: str = DEFAULT_OUTPUT, demo: bool = False,
@@ -1321,9 +1760,10 @@ def build_dashboard(output_path: str = DEFAULT_OUTPUT, demo: bool = False,
     FETCH_STATUS.clear()
     configure_window(lookback_days)
     data = collect_data(demo=demo)
-    fig, cards = build_figure(data)
     analysis = build_analysis(data)
-    path = write_dashboard(fig, cards, analysis, output_path, include_plotlyjs)
+    board = build_live_board(data, analysis)
+    board["_risk_metrics"] = analysis["risk_metrics"]
+    path = write_dashboard(board, output_path, include_plotlyjs)
     size_kb = os.path.getsize(path) / 1024
     ng = sum(1 for x in FETCH_STATUS if not x["ok"])
     print(f"正常に生成されました: {path} ({size_kb:,.0f} KB) / 取得失敗 {ng} 件")
@@ -1335,11 +1775,11 @@ def build_dashboard(output_path: str = DEFAULT_OUTPUT, demo: bool = False,
 # H. CLI
 # =============================================================================
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Global Money Flow & Market Dashboard 生成")
+    p = argparse.ArgumentParser(description="Global Money Flow ライブボード生成")
     p.add_argument("--output", default=DEFAULT_OUTPUT, help=f"出力HTMLパス（既定: {DEFAULT_OUTPUT}）")
     p.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS, help="取得期間（日数, 既定: 730）")
     p.add_argument("--demo", action="store_true", help="ダミーデータで動作確認（ネットワーク未使用）")
-    p.add_argument("--inline-plotlyjs", action="store_true", help="Plotly.js をHTMLに同梱（オフライン閲覧用・約4MB増）")
+    p.add_argument("--inline-plotlyjs", action="store_true", help="Plotly.js をHTMLに同梱（オフライン閲覧用）")
     return p.parse_args(argv)
 
 

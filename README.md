@@ -1,100 +1,166 @@
-# Global Money Flow & Market Dashboard
+# Global Money Flow — ライブボード（v4）
 
-APIキー不要の公開データを毎日集め、**最新値カード／自動分析／期間別パフォーマンス表／4段チャート**を1枚のHTMLにまとめるプロジェクトです。まずローカルで試し、その後 GitHub Pages で毎日自動更新できます。
+APIキー不要の公開データを毎日集め、**スクロールせずに一画面で読めるダッシュボード**を1枚のHTMLとして出力するプロジェクトです。まずローカルで確認し、その後 GitHub Pages で毎日自動更新できます。
 
 > **位置づけ**: 個人向けの市場モニタリング用サンプルです。機関投資家向けシステムとしてのデータ保証、運用監視、障害対応、ライセンス適合性を備えるものではありません。投資判断の前に、必ず一次情報・各データ提供元の条件を確認してください。
 
-## v2 で追加したもの
+## v4 で変わったこと（v3との違い）
 
-- **自動分析パネル**: VIX・ハイイールド債スプレッド・ドル指数・M2・MMF・ステーブルコイン・200日線乖離からリスクオン／オフを機械的にスコアリングし、判定理由を文章で表示
-- **期間別パフォーマンス表**: 1週間／1ヶ月／3ヶ月／6ヶ月／1年／2年／全期間の騰落率を一覧表示（データ頻度が粗い系列は比較可能な場合のみ数値、無理な場合は「—」）
-- **更新日時の明示**: ページ最上部に最終更新日時（JST）と観測期間、各カードに基準日を表示
-- **表示の改善**: 日本語フォント優先のスタック、サブプロット見出しの左寄せ、軸ラベルの自動マージン、数値の等幅表示、モバイル対応、印刷用CSS
-- **データ取得の堅牢化**: FRED は CSV → テキスト表 → 保存済みキャッシュ の3段フォールバック。失敗系列は「データ取得状況」に記録して折りたたみ表示
+v3は「リスク資産／ストレス／暗号資産・信用／動性」の4タブでした。v4では**「マネーフロー」タブを追加**し、世界中の主要資産を網羅して**「マネーがどこに流れているか」を視覚的に表現**します。
 
-## データと単位
+### 新機能：マネーフロー可視化（第5タブ）
+
+- **Sankey図（サンキー図）**: 資金の「源泉（M2拡大・MMF流出・ドル安・ステーブル流入・VIX低下）」→「資産クラス（株式・債券・商品・暗号資産・不動産）」→「地域（北米・欧州・日本・アジア・ラテン・大洋州・新興国・先進国）」の3段階フローを矢印の太さで表現
+- **世界ヒートマップ**: 地域×資産クラスのマトリクスで、ホットマネーの集中度を色の濃淡で表示
+- **資産ローテーションホイール**: 資産クラス別の配分比率をドーナツチャートで表示
+
+### v3から継承の機能
+
+- **スクロール不要の固定レイアウト**: 画面の高さに合わせて自動調整
+- **タブ切替式チャート**: 5タブ（リスク資産／ストレス／暗号資産・信用／流動性／マネーフロー）
+- **自動ローテーション**: 9秒ごとにタブが自動で切り替わる
+- **地合いゲージ**: リスクオンスコアを半円ゲージ＋カウントアップで表示
+- **相場テープ**: ヘッダー下を指標が流れるティッカー
+- **指標スナップショット**: 右カラムに最新値・1ヶ月比チップ・ミニスパークラインを一覧表示
+- **期間別パフォーマンスのヒート表**: 騰落率の大きさをセル背景色の濃淡で表現
+- **期間ボタン**: 1M／3M／6M／1Y／全 をワンクリックで切替
+- **キーボード操作**: ←→でタブ移動、Fで全画面
+- **データ取得状況の常時表示**: ドット（緑＝取得OK／赤＝失敗）で右下に一覧表示
+
+小さな画面（幅1180px以下、または高さ660px以下）では自動的に縦積みレイアウトへ切り替わります。
+
+## データと単位（v4追加あり）
+
+### 主要リスク資産（v3から継続）
 
 | 指標 | データ元 / シリーズ | 頻度・単位 |
 |---|---|---|
-| BTC、S&P 500、日経平均、EURO STOXX 50、金 | Yahoo Finance | 日次終値。期間初日を100として相対比較 |
+| BTC、S&P 500、日経平均、EURO STOXX 50、金 | Yahoo Finance | 日次終値。期間初日100として相対比較 |
 | 米ドル指数、VIX | Yahoo Finance | 日次 |
 | 米国M2 | FRED `WM2NS` | 週次、10億米ドル |
 | 米国MMF資産 | FRED `MMMFFAQ027S` | 四半期、百万米ドル（1,000で割り10億米ドル表示） |
 | ハイイールド債スプレッド | FRED `BAMLH0A0HYM2` | 日次、% |
-| 米国債ボラティリティ（代理指標） | FRED `DGS10` | 20営業日の金利日次変化の標準偏差、bp |
+| 米国債ボラティティ（代理指標） | FRED `DGS10` | 20営業日の金利日次変化の標準偏差、bp |
 | ステーブルコイン時価総額 | DefiLlama | 日次、10億米ドル |
 
-**MOVEに関する注意**: Yahoo Finance の `^MOVE` は ICE BofA MOVE 指数として確認できないため使用しません。米10年債利回りから計算した代理指標を表示しており、正式な MOVE 指数ではありません。
+### 世界主要指数（v4追加）
 
-## ローカル実行（Windows）
+| 指標 | データ元 | 地域 |
+|---|---|---|
+| FTSE 100 | Yahoo Finance `^FTSE` | 英国（欧州） |
+| DAX | Yahoo Finance `^GDAXI` | ドイツ（欧州） |
+| 上海総合 | Yahoo Finance `000001.SS` | 中国（アジア） |
+| ハンセン | Yahoo Finance `^HSI` | 香港（アジア） |
+| Nifty 50 | Yahoo Finance `^NSEI` | インド（アジア） |
+| BOVESPA | Yahoo Finance `^BVSP` | ブラジル（ラテン） |
+| ASX | Yahoo Finance `^AORD` | オーストラリア（大洋州） |
+| TSX | Yahoo Finance `^GSPTSE` | カナダ（北米） |
 
-Python 3.12 を推奨します。
+### 資産クラETF（v4追加）
 
-```powershell
-cd D:\global-moneyflow-dashboard
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+| 指標 | データ元 | 資産クラス |
+|---|---|---|
+| TLT | Yahoo Finance `TLT` | 米長期債 |
+| IEF | Yahoo Finance `IEF` | 米中期債 |
+| HYG | Yahoo Finance `HYG` | ハイールド債 |
+| LQD | Yahoo Finance `LQD` | 投資適格債 |
+| VNQ | Yahoo Finance `VNQ` | 不動産 |
+| EEM | Yahoo Finance `EEM` | 新興国株式 |
+| EFA | Yahoo Finance `EFA` | 先進国株式 ex-US |
+| 原油WTI | Yahoo Finance `CL=F` | 商品 |
+
+**マネーフローの計算方法**: 各資産の1ヶ月リターンを `tanh(リターン/15%)` で[-1, 1]に正規化した「フロースコア」を使用。M2増加・MMF減少・ドル安・ステーブルコイン増加・VIX低下を「資金の源泉」とみなし、資産クラスと地域への配分を推定しています。価格変動を資金流入の代理指標として使用しており、実際の資金フロー（取引高・資金調達額等）ではありません。
+
+## セットアップ
+
+1. Python 3.11以上をインストール
+2. 必要なパッケージをインストール:
+   ```bash
+   pip install pandas plotly requests yfinance
+   ```
+
+## 使い方
+
+### ローカルで実行（ネットワークあり）
+
+```bash
+python generate_dashboard.py
 ```
 
-まずネット接続不要のデモで確認します。
+`index.html` が生成されます。
 
-```powershell
-.\.venv\Scripts\python.exe generate_dashboard.py --demo
-Start-Process .\public\index.html
+### デモモード（ネットワークなし、ダミーデータ）
+
+```bash
+python generate_dashboard.py --demo
 ```
 
-実データを取得する場合:
+### オフライン版（Plotly.jsを同梱）
 
-```powershell
-.\.venv\Scripts\python.exe generate_dashboard.py
-Start-Process .\public\index.html
+```bash
+python generate_dashboard.py --inline-plotlyjs --output ライブボード見本_v4.html
 ```
 
-簡易バッチも用意しています。`setup_windows.bat` →（`run_demo_dashboard.bat` または `run_dashboard.bat`）の順に実行してください。
+### 出力先を変更
 
-### よく使うオプション
-
-```powershell
-# 過去3年分
-.\.venv\Scripts\python.exe generate_dashboard.py --lookback-days 1095
-
-# 出力先を変更
-.\.venv\Scripts\python.exe generate_dashboard.py --output out\index.html
-
-# Plotly.js もHTMLに同梱（約4MB増。オフライン閲覧向け）
-.\.venv\Scripts\python.exe generate_dashboard.py --inline-plotlyjs
+```bash
+python generate_dashboard.py --output docs/index.html
 ```
 
-標準ではグラフ描画ライブラリを CDN から読み込むため、HTML 表示時にインターネット接続が必要です。
+## GitHub Actions で自動更新
 
-## ディレクトリ構成
+`.github/workflows/update-dashboard.yml` をリポジトリに配置すると、毎日JST 8:00に自動実行されます。
 
-```text
+```yaml
+name: Update Dashboard
+on:
+  schedule:
+    - cron: '0 23 * * *'  # UTC 23:00 = JST 8:00
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas plotly requests yfinance
+      - run: python generate_dashboard.py --output docs/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
+```
+
+## ファイル構成
+
+```
 global-moneyflow-dashboard/
-├── .github/workflows/deploy.yml
-├── generate_dashboard.py
-├── requirements.txt
-├── setup_windows.bat
-├── run_dashboard.bat
-├── run_demo_dashboard.bat
-├── README.md
-├── data/cache/            # FRED 取得結果のキャッシュ（Actions で復元）
-└── public/
-    └── index.html         # 生成HTML（Git管理対象外）
+├── generate_dashboard.py      # メインスクリプト（v4）
+├── README.md                  # このファイル
+├── docs/
+│   └── index.html            # 生成されたダッシュボード
+└── .github/
+    └── workflows/
+        └── update-dashboard.yml
 ```
 
-## GitHub Pages で公開
+## 注意事項
 
-1. リポジトリを作成し、プロジェクトファイルを push（例: `main` ブランチ）
-2. **Settings → Pages → Build and deployment → Source** を **GitHub Actions** に設定
-3. **Actions** タブの `Build and Deploy Dashboard` を実行、または `main` に push
-4. 成功後、deploy ジョブに表示される URL で確認。以降は毎日 UTC 23:00（日本時間 08:00）に自動更新
-
-## 留意点
-
-- 無料API・公開CSVは予告なく仕様変更、欠損、遅延、レート制限が起こり得ます。
-- yfinance は Yahoo Finance の公式APIではありません。利用条件、再配布・公開範囲を確認してください。
-- FRED がメンテナンス中の場合、`data/cache` の前回値で描画されます（「データ取得状況」に表示）。
-- GitHub Actions の cron は混雑時に遅延することがあります。厳密な 08:00 更新を保証するものではありません。
-- 自動分析はルールベースの機械判定であり、投資助言ではありません。
+- yfinance は非公式の Yahoo Finance API ラッパーす。IT部門のセキュリティ審査で指摘される可能性があります。社内導入の際は一次データソース（Bloomberg、Refinitiv等）への切り替えを検討してください。
+- 会社ネットワークではプロキシ設定が必要な場合があります。
+- 本ダッシュボードは情報提供のみを目的とした定点観測であり、投資助言・勧誘ではありません。
