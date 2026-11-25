@@ -1494,7 +1494,14 @@ def build_chart_payload(data: dict[str, pd.Series]) -> list[dict]:
                 "fillcolor": "rgba(52,211,153,.10)" if fill else None,
                 "markers": label.startswith("米国MMF"),
             })
-        if traces:
+        if spec.get("is_flowworld"):
+            groups.append({
+                "key": spec["key"],
+                "label": spec["label"],
+                "caption": spec["caption"],
+                "is_flowworld": True,
+            })
+        elif traces:
             groups.append({
                 "key": spec["key"],
                 "label": spec["label"],
@@ -1691,15 +1698,28 @@ def write_dashboard(board: dict, output_path: str = DEFAULT_OUTPUT,
         active = " active" if i == 0 else ""
         tabs.append(f'<button class="tab{active}" data-i="{i}" type="button">'
                     f'{html_lib.escape(g["label"])}</button>')
-        plots.append(f'<div class="plot" id="chart{i}" style="display:{"block" if i==0 else "none"}"></div>')
+        if g.get("is_flowworld"):
+            plots.append(f'''<div class="plot flowWorldPlot" id="chart{i}" style="display:{"block" if i==0 else "none"}">
+              <div class="fwMap" id="fwMap{i}"></div>
+              <div class="fwBottom">
+                <div class="fwTime" id="fwTime{i}"></div>
+                <div class="fwWheel" id="fwWheel{i}"></div>
+              </div>
+            </div>''')
+        else:
+            plots.append(f'<div class="plot" id="chart{i}" style="display:{"block" if i==0 else "none"}"></div>')
 
     period_btns = "".join(
         f'<button class="pbtn{" active" if p == "ALL" else ""}" data-p="{p}" type="button">{lab}</button>'
         for p, lab in (("1M", "1M"), ("3M", "3M"), ("6M", "6M"), ("1Y", "1Y"), ("ALL", "全"))
     )
 
-    payload = json.dumps({"groups": board["groups"]}, ensure_ascii=False,
-                         separators=(",", ":")).replace("</", "<\\/")
+    payload = json.dumps({
+        "groups": board["groups"],
+        "flow": board.get("flow", {}),
+        "flow_heatmap": board.get("flow_heatmap", []),
+        "flow_rotation": board.get("flow_rotation", {}),
+    }, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
 
     if include_plotlyjs == "cdn":
         plotly_tag = ('<script src="https://cdn.plot.ly/plotly-%s.min.js" charset="utf-8"></script>'
