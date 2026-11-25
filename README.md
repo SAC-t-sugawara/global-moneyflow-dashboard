@@ -1,26 +1,34 @@
 # Global Money Flow & Market Dashboard
 
-無料で取得できる公開データを毎日集め、Plotlyのインタラクティブなダッシュボードを単一HTMLとして生成するプロジェクトです。まずローカルで試し、その後GitHub Pagesへ公開できます。
+APIキー不要の公開データを毎日集め、**最新値カード／自動分析／期間別パフォーマンス表／4段チャート**を1枚のHTMLにまとめるプロジェクトです。まずローカルで試し、その後 GitHub Pages で毎日自動更新できます。
 
 > **位置づけ**: 個人向けの市場モニタリング用サンプルです。機関投資家向けシステムとしてのデータ保証、運用監視、障害対応、ライセンス適合性を備えるものではありません。投資判断の前に、必ず一次情報・各データ提供元の条件を確認してください。
 
+## v2 で追加したもの
+
+- **自動分析パネル**: VIX・ハイイールド債スプレッド・ドル指数・M2・MMF・ステーブルコイン・200日線乖離からリスクオン／オフを機械的にスコアリングし、判定理由を文章で表示
+- **期間別パフォーマンス表**: 1週間／1ヶ月／3ヶ月／6ヶ月／1年／2年／全期間の騰落率を一覧表示（データ頻度が粗い系列は比較可能な場合のみ数値、無理な場合は「—」）
+- **更新日時の明示**: ページ最上部に最終更新日時（JST）と観測期間、各カードに基準日を表示
+- **表示の改善**: 日本語フォント優先のスタック、サブプロット見出しの左寄せ、軸ラベルの自動マージン、数値の等幅表示、モバイル対応、印刷用CSS
+- **データ取得の堅牢化**: FRED は CSV → テキスト表 → 保存済みキャッシュ の3段フォールバック。失敗系列は「データ取得状況」に記録して折りたたみ表示
+
 ## データと単位
 
-| 指標 | データ元 / シリーズ | 頻度・単位（提供元の系列定義に従う） |
+| 指標 | データ元 / シリーズ | 頻度・単位 |
 |---|---|---|
-| BTC、S&P 500、日経平均、EURO STOXX 50、金 | Yahoo Finance | 日次終値。各系列の取得初日の値を100として相対比較 |
+| BTC、S&P 500、日経平均、EURO STOXX 50、金 | Yahoo Finance | 日次終値。期間初日を100として相対比較 |
 | 米ドル指数、VIX | Yahoo Finance | 日次 |
 | 米国M2 | FRED `WM2NS` | 週次、10億米ドル |
-| 米国MMF資産 | FRED `MMMFFAQ027S` | 系列のCSV値を1,000で割り、10億米ドル表示 |
+| 米国MMF資産 | FRED `MMMFFAQ027S` | 四半期、百万米ドル（1,000で割り10億米ドル表示） |
 | ハイイールド債スプレッド | FRED `BAMLH0A0HYM2` | 日次、% |
-| 米10年債金利変動ボラティリティ（代理指標） | FRED `DGS10` | 20営業日の金利日次変化の標準偏差、bp |
+| 米国債ボラティリティ（代理指標） | FRED `DGS10` | 20営業日の金利日次変化の標準偏差、bp |
 | ステーブルコイン時価総額 | DefiLlama | 日次、10億米ドル |
 
-**MOVEに関する注意**: Yahoo Financeの `^MOVE` はICE BofA MOVE指数として確認できないため使用しません。このプロジェクトでは米10年債利回りから計算した代理指標を表示します。これは正式なMOVE指数ではありません。
+**MOVEに関する注意**: Yahoo Finance の `^MOVE` は ICE BofA MOVE 指数として確認できないため使用しません。米10年債利回りから計算した代理指標を表示しており、正式な MOVE 指数ではありません。
 
 ## ローカル実行（Windows）
 
-Python 3.12を推奨します。PowerShellでプロジェクトフォルダへ移動して実行します。
+Python 3.12 を推奨します。
 
 ```powershell
 cd D:\global-moneyflow-dashboard
@@ -29,21 +37,21 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-まずネットワークアクセス不要のデモデータで生成を確認します。
+まずネット接続不要のデモで確認します。
 
 ```powershell
 .\.venv\Scripts\python.exe generate_dashboard.py --demo
 Start-Process .\public\index.html
 ```
 
-実データを取得して生成する場合:
+実データを取得する場合:
 
 ```powershell
 .\.venv\Scripts\python.exe generate_dashboard.py
 Start-Process .\public\index.html
 ```
 
-初回の実データ取得にはネットワーク接続が必要です。データ元の応答遅延・レート制限等により、一部系列が欠けることがあります。取得できなかった系列は警告を表示し、他のデータの生成は続行します。
+簡易バッチも用意しています。`setup_windows.bat` →（`run_demo_dashboard.bat` または `run_dashboard.bat`）の順に実行してください。
 
 ### よく使うオプション
 
@@ -54,27 +62,11 @@ Start-Process .\public\index.html
 # 出力先を変更
 .\.venv\Scripts\python.exe generate_dashboard.py --output out\index.html
 
-# Plotly.jsもHTML内に埋め込み（約4MB増。オフライン閲覧向け）
+# Plotly.js もHTMLに同梱（約4MB増。オフライン閲覧向け）
 .\.venv\Scripts\python.exe generate_dashboard.py --inline-plotlyjs
 ```
 
-標準ではHTML内のグラフライブラリをCDNから読み込むため、ブラウザでグラフを表示する際にインターネット接続が必要です。`--inline-plotlyjs` を使うとネット接続なしでもグラフを表示できます。
-
-## Windowsの簡易起動ファイル
-
-プロジェクト内の `setup_windows.bat` を一度実行すると、仮想環境を作成して依存関係をインストールします。その後は `run_demo_dashboard.bat`（ダミーデータ）または `run_dashboard.bat`（実データ）を実行できます。
-
-## ローカル実行（macOS / Linux）
-
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python generate_dashboard.py --demo
-```
-
-生成された `public/index.html` をブラウザで開いてください。
+標準ではグラフ描画ライブラリを CDN から読み込むため、HTML 表示時にインターネット接続が必要です。
 
 ## ディレクトリ構成
 
@@ -87,23 +79,22 @@ global-moneyflow-dashboard/
 ├── run_dashboard.bat
 ├── run_demo_dashboard.bat
 ├── README.md
-└── public/                 # 実行時に自動作成
-    └── index.html          # 生成HTML（Git管理対象外）
+├── data/cache/            # FRED 取得結果のキャッシュ（Actions で復元）
+└── public/
+    └── index.html         # 生成HTML（Git管理対象外）
 ```
 
-## GitHub Pagesで公開
+## GitHub Pages で公開
 
-1. GitHubでリポジトリを作成し、プロジェクトファイルをPushします（例: `main` ブランチ）。
-2. リポジトリの **Settings → Pages → Build and deployment → Source** を **GitHub Actions** に設定します。
-3. **Actions** タブから `Build and Deploy Dashboard` を実行するか、`main` にPushします。
-4. 成功後、Actionsのdeployジョブに表示されるURLで確認します。以降は毎日UTC 23:00（日本時間08:00）に更新されます。
-
-GitHub Pagesの公開URLは通常 `https://<ユーザー名>.github.io/<リポジトリ名>/` です。ユーザー/組織の特別リポジトリではパスが異なります。無料プランのPages公開条件・リポジトリ公開範囲はGitHubの最新仕様を確認してください。
+1. リポジトリを作成し、プロジェクトファイルを push（例: `main` ブランチ）
+2. **Settings → Pages → Build and deployment → Source** を **GitHub Actions** に設定
+3. **Actions** タブの `Build and Deploy Dashboard` を実行、または `main` に push
+4. 成功後、deploy ジョブに表示される URL で確認。以降は毎日 UTC 23:00（日本時間 08:00）に自動更新
 
 ## 留意点
 
 - 無料API・公開CSVは予告なく仕様変更、欠損、遅延、レート制限が起こり得ます。
-- yfinanceはYahoo Financeの公式APIではありません。利用条件、データの再配布・公開範囲を確認してください。
-- DefiLlamaの系列定義やFREDの系列単位が変わった場合は、グラフの単位換算を再確認してください。
-- GitHub Actionsのcronは混雑時に遅延する場合があります。厳密な08:00更新を保証するものではありません。
-- 投資助言ではありません。
+- yfinance は Yahoo Finance の公式APIではありません。利用条件、再配布・公開範囲を確認してください。
+- FRED がメンテナンス中の場合、`data/cache` の前回値で描画されます（「データ取得状況」に表示）。
+- GitHub Actions の cron は混雑時に遅延することがあります。厳密な 08:00 更新を保証するものではありません。
+- 自動分析はルールベースの機械判定であり、投資助言ではありません。
