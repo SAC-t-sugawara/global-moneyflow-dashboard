@@ -1,0 +1,53 @@
+name: Build and Deploy Dashboard
+
+on:
+  push:
+    branches: ["main"]
+  schedule:
+    # 毎日 UTC 23:00（日本時間 08:00）に自動実行
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Pythonをセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 依存関係をインストール
+        run: python -m pip install -r requirements.txt
+
+      - name: HTMLダッシュボードを生成
+        run: python generate_dashboard.py
+
+      - name: Pagesアーティファクトをアップロード
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: GitHub Pagesへデプロイ
+        id: deployment
+        uses: actions/deploy-pages@v4
