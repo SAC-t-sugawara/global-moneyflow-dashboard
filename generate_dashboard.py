@@ -54,8 +54,6 @@ FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
 FRED_TXT_URL = "https://fred.stlouisfed.org/data/{series_id}.txt"
 DEFILLAMA_STABLECOIN_URL = "https://stablecoins.llama.fi/stablecoincharts/all"
 
-# FRED はデータセンターからのアクセスに 500 を返すことがあるため、
-# ブラウザに近いヘッダーを付け、失敗時はリトライと代替エンドポイントを使う。
 HTTP_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -69,7 +67,6 @@ HTTP_HEADERS = {
 FONT_STACK = ("'Hiragino Kaku Gothic ProN', 'Hiragino Sans', 'Yu Gothic UI', "
               "'Yu Gothic', 'Meiryo', 'Noto Sans JP', 'Segoe UI', sans-serif")
 
-# データ取得状況（HTMLの「データ取得状況」欄に表示する）
 FETCH_STATUS: list[dict] = []
 
 
@@ -82,7 +79,6 @@ def _record(label: str, source: str, ok: bool, detail: str = "") -> None:
     })
 
 
-# (キー, 表示名, ティッカー)
 RISK_ASSETS: list[tuple[str, str]] = [
     ("BTC", "ビットコイン (BTC)"),
     ("SPX", "米国株 (S&P 500)"),
@@ -101,11 +97,8 @@ RISK_COLORS = ["#f7931a", "#2563eb", "#dc2626", "#059669", "#d4a017"]
 
 DXY_TICKER = "DX-Y.NYB"
 VIX_TICKER = "^VIX"
-# Yahoo Finance の "^MOVE" は ICE BofA MOVE 指数ではないため使わない。
-# 代わりに米10年債利回り(DGS10)の20営業日変動幅(bp)を代理指標として算出する。
 US10Y_FRED_SERIES = "DGS10"
 
-# ---- v4: 世界指数ティッカー ----
 WORLD_INDEX_TICKERS: dict[str, str] = {
     "英国 (FTSE 100)": "^FTSE",
     "ドイツ (DAX)": "^GDAXI",
@@ -117,7 +110,6 @@ WORLD_INDEX_TICKERS: dict[str, str] = {
     "カナダ (TSX)": "^GSPTSE",
 }
 
-# ---- v4: 資産クラスETFティッカー ----
 ASSET_CLASS_TICKERS: dict[str, str] = {
     "米長期債 (TLT)": "TLT",
     "米中期債 (IEF)": "IEF",
@@ -144,7 +136,6 @@ def _start_ts() -> pd.Timestamp:
 # B. データ取得
 # =============================================================================
 def _clean(s: pd.Series) -> pd.Series:
-    """日付インデックスを正規化（タイムゾーン除去・日次丸め・重複除去・ソート）。"""
     idx = pd.to_datetime(s.index)
     if getattr(idx, "tz", None) is not None:
         idx = idx.tz_localize(None)
@@ -155,7 +146,6 @@ def _clean(s: pd.Series) -> pd.Series:
 
 
 def fetch_yf_series(label: str, ticker: str, retries: int = 3, wait: float = 5.0) -> pd.Series:
-    """Yahoo Finance から終値の時系列を取得する。"""
     try:
         import yfinance as yf
     except ImportError:
@@ -174,7 +164,7 @@ def fetch_yf_series(label: str, ticker: str, retries: int = 3, wait: float = 5.0
                     print(f"[ OK ] yfinance {ticker}: {len(s)} 件")
                     _record(label, "Yahoo Finance", True)
                     return s
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"[WARN] yfinance failed for {ticker}: {e} ({attempt}/{retries})")
         if attempt < retries:
             time.sleep(wait * attempt)
@@ -184,7 +174,6 @@ def fetch_yf_series(label: str, ticker: str, retries: int = 3, wait: float = 5.0
 
 
 def _parse_fred_csv(text: str) -> pd.Series:
-    """fredgraph.csv 形式（observation_date,VALUE）をパースする。"""
     head = text.lstrip()[:200].lower()
     if not head.startswith("observation_date"):
         raise ValueError("CSV形式ではありません（エラーページの可能性）")
@@ -197,11 +186,6 @@ def _parse_fred_csv(text: str) -> pd.Series:
 
 
 def _parse_fred_table(text: str) -> pd.Series:
-    """fred.stlouisfed.org/data/{ID}.txt 形式（HTML表／テキスト）をパースする。
-
-    行頭が YYYY-MM-DD で始まる行だけをデータ行として扱うため、
-    「Last Updated 2026-11-24 12:01 PM」のようなヘッダー行は無視される。
-    """
     chunks = re.split(r"(?i)</?tr[^>]*>|\n", text)
     pairs: list[tuple[pd.Timestamp, float]] = []
     pat = re.compile(r"^\s*(\d{4}-\d{2}-\d{2})\s+(-?\d+(?:\.\d+)?)\s*$")
@@ -220,13 +204,12 @@ def _cache_path(series_id: str) -> str:
 
 
 def _save_cache(series_id: str, s: pd.Series) -> None:
-    """取得できた系列を保存しておく（次回のフォールバック用）。"""
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
         df = pd.DataFrame({series_id: s.values}, index=s.index)
         df.index.name = "observation_date"
         df.to_csv(_cache_path(series_id))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"[WARN] cache write failed for {series_id}: {e}")
 
 
@@ -238,20 +221,13 @@ def _load_cache(series_id: str) -> pd.Series:
         df = pd.read_csv(path, index_col=0)
         s = _clean(pd.to_numeric(df.iloc[:, 0], errors="coerce").dropna())
         return s[s.index >= _start_ts()]
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"[WARN] cache read failed for {series_id}: {e}")
         return pd.Series(dtype=float)
 
 
 def fetch_fred(series_id: str, label: Optional[str] = None,
                attempts_csv: int = 3, attempts_txt: int = 2) -> pd.Series:
-    """FRED から APIキー不要の公開データを取得する。
-
-    取得順:
-      1) graph/fredgraph.csv （リトライ付き）
-      2) data/{ID}.txt        （HTML表形式フォールバック）
-      3) data/cache/{ID}.csv  （前回取得分。リポジトリに残しておけば継続表示できる）
-    """
     label = label or series_id
     last_error = "unknown"
 
@@ -268,7 +244,7 @@ def fetch_fred(series_id: str, label: Optional[str] = None,
             _record(label, "FRED CSV", True)
             _save_cache(series_id, s)
             return s
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             last_error = f"{type(e).__name__}: {e}"
             print(f"[WARN] FRED(CSV) failed for {series_id}: {last_error} ({attempt}/{attempts_csv})")
             if attempt < attempts_csv:
@@ -287,7 +263,7 @@ def fetch_fred(series_id: str, label: Optional[str] = None,
             _record(label, "FRED テキスト", True, "CSVが使えずテキスト形式で取得")
             _save_cache(series_id, s)
             return s
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             last_error = f"{type(e).__name__}: {e}"
             print(f"[WARN] FRED(txt) failed for {series_id}: {last_error} ({attempt}/{attempts_txt})")
             if attempt < attempts_txt:
@@ -305,7 +281,6 @@ def fetch_fred(series_id: str, label: Optional[str] = None,
 
 
 def fetch_stablecoin_mcap(label: str = "ステーブルコイン時価総額") -> pd.Series:
-    """DefiLlama からステーブルコイン総時価総額（10億ドル単位）を取得する。"""
     try:
         res = requests.get(DEFILLAMA_STABLECOIN_URL, headers=HTTP_HEADERS, timeout=30)
         res.raise_for_status()
@@ -329,7 +304,7 @@ def fetch_stablecoin_mcap(label: str = "ステーブルコイン時価総額") -
         print(f"[ OK ] DefiLlama ステーブルコイン: {len(s)} 件")
         _record(label, "DefiLlama", True)
         return s
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"[WARN] DefiLlama failed: {e}")
         _record(label, "DefiLlama", False, f"取得失敗（{e}）")
         return pd.Series(dtype=float)
@@ -339,7 +314,6 @@ def fetch_stablecoin_mcap(label: str = "ステーブルコイン時価総額") -
 # C. 指標計算
 # =============================================================================
 def normalize_100(s: pd.Series) -> pd.Series:
-    """開始時点を100とした相対パフォーマンスに変換する。"""
     if s is None or s.empty:
         return pd.Series(dtype=float)
     first = s.iloc[0]
@@ -358,11 +332,6 @@ def _pct_change_n(s: pd.Series, periods: int) -> Optional[float]:
 
 
 def _prior_point(s: pd.Series, days: int) -> Optional[float]:
-    """「直近データ日から days 日前」に最も近い過去の観測値。
-
-    四半期・週次データで「1ヶ月比」が四半期前との比較になってしまうのを防ぐため、
-    対象日から許容幅（期間の35%または10日）を超れて離れた点は使わない。
-    """
     if s is None or len(s) < 2:
         return None
     target = s.index[-1] - pd.Timedelta(days=days)
@@ -376,7 +345,6 @@ def _prior_point(s: pd.Series, days: int) -> Optional[float]:
 
 
 def period_return(s: pd.Series, days: int) -> Optional[float]:
-    """「直近データ日から days 日前」との騰落率（%）。比較可能な点が無ければ None。"""
     base = _prior_point(s, days)
     if base is None or pd.isna(base) or base == 0:
         return None
@@ -384,7 +352,6 @@ def period_return(s: pd.Series, days: int) -> Optional[float]:
 
 
 def period_change_abs(s: pd.Series, days: int) -> Optional[float]:
-    """絶対値の変化幅（M2/MMF/ステーブルコインなど水準指標向け）。"""
     base = _prior_point(s, days)
     if base is None or pd.isna(base):
         return None
@@ -392,7 +359,6 @@ def period_change_abs(s: pd.Series, days: int) -> Optional[float]:
 
 
 def annualized_vol(s: pd.Series, window: int = 60) -> Optional[float]:
-    """直近 window 本の日次リターンから年率ボラティリティ（%）を算出。"""
     if s is None or len(s) < window + 2:
         return None
     r = s.pct_change().dropna().tail(window)
@@ -402,7 +368,6 @@ def annualized_vol(s: pd.Series, window: int = 60) -> Optional[float]:
 
 
 def max_drawdown(s: pd.Series) -> Optional[float]:
-    """期間内の最大ドローダウン（%、マイナス値）。"""
     if s is None or len(s) < 5:
         return None
     peak = s.cummax()
@@ -444,7 +409,6 @@ def _fmt_signed(v: Optional[float], unit: str = "%") -> str:
 # D. データ収集
 # =============================================================================
 def collect_data(demo: bool = False) -> dict[str, pd.Series]:
-    """全データソースからデータを集めて dict で返す。"""
     if demo:
         print("[INFO] デモモード: ダミーデータで生成します（ネットワーク未使用）")
         data = _demo_data()
@@ -461,11 +425,9 @@ def collect_data(demo: bool = False) -> dict[str, pd.Series]:
     data["米ドル指数 (DXY)"] = fetch_yf_series("米ドル指数 (DXY)", DXY_TICKER)
     data["VIX (株式恐怖指数)"] = fetch_yf_series("VIX (株式恐怖指数)", VIX_TICKER)
 
-    # ---- v4: 世界指数 ----
     for label, ticker in WORLD_INDEX_TICKERS.items():
         data[label] = fetch_yf_series(label, ticker)
 
-    # ---- v4: 資産クラスETF ----
     for label, ticker in ASSET_CLASS_TICKERS.items():
         data[label] = fetch_yf_series(label, ticker)
 
@@ -478,7 +440,6 @@ def collect_data(demo: bool = False) -> dict[str, pd.Series]:
 
 
 def _bond_vol(y10: pd.Series) -> pd.Series:
-    """米10年債利回りの20営業日変動幅（bp）を MOVE の代替プロキシとして算出する。"""
     if y10 is None or y10.empty:
         return pd.Series(dtype=float)
     diff_bp = y10.diff() * 100.0
@@ -486,7 +447,6 @@ def _bond_vol(y10: pd.Series) -> pd.Series:
 
 
 def _demo_data() -> dict[str, pd.Series]:
-    """ネットワークなしでパイプラインを検証するためのダミーデータ。"""
     import numpy as np
 
     rng = np.random.default_rng(42)
@@ -508,9 +468,9 @@ def _demo_data() -> dict[str, pd.Series]:
     d["米ドル指数 (DXY)"] = walk(days, 104.0, 0.0000, 0.003)
     d["VIX (株式恐怖指数)"] = walk(days, 15.0, 0.0, 0.045).clip(lower=11, upper=45)
     d["米国M2 ($B)"] = walk(weekly, 21000.0, 0.0015, 0.001)
-    d["米国MMF高 ($B)"] = walk(quarterly, 6800.0, 0.01, 0.02)
+    d["米国MMF残高 ($B)"] = walk(quarterly, 6800.0, 0.01, 0.02)
+
     def reverted(index, level, vol, lo, hi):
-        """水準が行き過ぎないよう平均回帰させたダミー系列。"""
         x = [level]
         for _ in range(len(index) - 1):
             nxt = x[-1] + (level - x[-1]) * 0.03 + rng.normal(0, vol)
@@ -521,7 +481,6 @@ def _demo_data() -> dict[str, pd.Series]:
     d["米国債ボラティリティ (bp)"] = reverted(days, 8.0, 0.3, 3.0, 18.0)
     d["ステーブルコイン時価総額 ($B)"] = walk(days, 160.0, 0.0008, 0.004)
 
-    # ---- v4: 世界指数ダミーデータ ----
     d["英国 (FTSE 100)"] = walk(days, 7800, 0.0003, 0.008)
     d["ドイツ (DAX)"] = walk(days, 18500, 0.0004, 0.009)
     d["中国 (上海総合)"] = walk(days, 3100, 0.0002, 0.011)
@@ -531,7 +490,6 @@ def _demo_data() -> dict[str, pd.Series]:
     d["オーストラリア (ASX)"] = walk(days, 8200, 0.0003, 0.008)
     d["カナダ (TSX)"] = walk(days, 24500, 0.0003, 0.008)
 
-    # ---- v4: 資産クラスETFダミーデータ ----
     d["米長期債 (TLT)"] = walk(days, 95.0, -0.0002, 0.007)
     d["米中期債 (IEF)"] = walk(days, 102.0, -0.0001, 0.005)
     d["ハイールド債 (HYG)"] = walk(days, 78.0, 0.0002, 0.006)
@@ -564,7 +522,6 @@ def _last_date(s: pd.Series) -> str:
 
 
 def _level_comment(vix: Optional[float], hy: Optional[float]) -> str:
-    """VIX と HY スプレッドから市場ストレスの状態を判定する。"""
     flags = []
     if vix is not None:
         if vix >= 30:
@@ -584,7 +541,6 @@ def _level_comment(vix: Optional[float], hy: Optional[float]) -> str:
 
 
 def score_regime(data: dict[str, pd.Series]) -> tuple[str, int, int, list[tuple[str, bool]]]:
-    """リスクオン/オフを機械的にスコアリングする（加点式・最大7点）。"""
     reasons: list[tuple[str, bool]] = []
     score = 0
     total = 0
@@ -670,7 +626,6 @@ def score_regime(data: dict[str, pd.Series]) -> tuple[str, int, int, list[tuple[
 
 
 def build_performance_table(data: dict[str, pd.Series]) -> list[dict]:
-    """期間別リターン表の行データを作る。"""
     rows: list[dict] = []
     for _key, label in RISK_ASSETS:
         s = data.get(label)
@@ -709,14 +664,13 @@ def build_performance_table(data: dict[str, pd.Series]) -> list[dict]:
         row = {"label": label, "last": _fmt(s.iloc[-1], unit, digits),
                "values": {}, "date": _last_date(s)}
         for pk, _pl, days in PERIOD_LABELS:
-            row["values"][pk] = None   # 水準指標は変化率を出さず「—」表示
+            row["values"][pk] = None
         row["values"]["all"] = None
         rows.append(row)
     return rows
 
 
 def build_analysis(data: dict[str, pd.Series]) -> dict:
-    """自動分析の結果をまとめて返す。"""
     regime_label, score, total, reasons = score_regime(data)
 
     vix = data.get("VIX (株式恐怖指数)")
@@ -726,7 +680,6 @@ def build_analysis(data: dict[str, pd.Series]) -> dict:
         float(hy.iloc[-1]) if hy is not None and not hy.empty else None,
     )
 
-    # ハイライト: 期間リターンの上位／下位
     ranked = []
     for _key, label in RISK_ASSETS:
         s = data.get(label)
@@ -739,7 +692,6 @@ def build_analysis(data: dict[str, pd.Series]) -> dict:
     best = ranked[0] if ranked else None
     worst = ranked[-1] if ranked else None
 
-    # ボラティリティと最大DD（S&P 500 と BTC）
     risk_metrics = []
     for label in ("米国株 (S&P 500)", "ビットコイン (BTC)", "日本株 (日経平均)"):
         s = data.get(label)
@@ -752,7 +704,6 @@ def build_analysis(data: dict[str, pd.Series]) -> dict:
             "sma_dev": deviation_from_sma(s, 200),
         })
 
-    # 流動性の変化
     liquidity = []
     for label, unit, digits in [
         ("米国M2 ($B)", " B$", 0),
@@ -818,7 +769,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   }
   .app{height:100vh; height:100dvh; display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; gap:0; overflow:hidden}
 
-  /* ---------- header ---------- */
   header{display:flex; align-items:center; justify-content:space-between; gap:14px; padding:10px 16px 8px}
   .brand{display:flex; align-items:center; gap:11px; min-width:0}
   .logo{width:32px;height:32px;border-radius:10px;flex:0 0 auto;
@@ -836,7 +786,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     border-radius:9px;width:28px;height:28px;cursor:pointer;font-size:13px;line-height:1;transition:.18s}
   .ghost:hover{background:rgba(34,211,238,.16);color:var(--accent);border-color:rgba(34,211,238,.4)}
 
-  /* ---------- ticker ---------- */
   .ticker{overflow:hidden;border-top:1px solid var(--line2);border-bottom:1px solid var(--line2);
     background:rgba(8,14,24,.55);height:30px;display:flex;align-items:center;
     mask-image:linear-gradient(90deg,transparent,#000 3%,#000 97%,transparent)}
@@ -848,7 +797,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .tape em{font-style:normal;font-variant-numeric:tabular-nums;font-weight:700;font-size:11px}
   .tape em.up{color:var(--up)} .tape em.down{color:var(--down)} .tape em.flat{color:var(--flat)}
 
-  /* ---------- grid ---------- */
   .grid{display:grid;grid-template-columns:320px minmax(0,1fr) 348px;gap:11px;padding:11px 14px;min-height:0;overflow:hidden}
   .col{display:flex;flex-direction:column;gap:11px;min-height:0}
   .panel{background:var(--panelbg);border:1px solid var(--line);border-radius:15px;padding:12px 13px;
@@ -860,7 +808,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     margin:0 0 9px;flex:0 0 auto}
   .panel-h .r{font-weight:600;letter-spacing:0;text-transform:none;font-size:10px;color:#5f728a}
 
-  /* ---------- gauge ---------- */
   .gaugeBox{position:relative;flex:0 0 auto;display:flex;flex-direction:column;align-items:center;padding:2px 0 0}
   .gaugeBox svg{width:100%;max-width:250px;height:auto;display:block}
   .gaugeCenter{position:absolute;left:0;right:0;top:44%;text-align:center;pointer-events:none}
@@ -878,7 +825,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .reasons li.on::before{background:var(--up);box-shadow:0 0 8px rgba(52,211,153,.75)}
   .reasons li.off::before{background:var(--down);box-shadow:0 0 8px rgba(251,113,133,.6)}
 
-  /* ---------- tabs / chart ---------- */
   .chartPanel{flex:1 1 auto;min-height:0;padding:10px 12px 8px;display:flex;flex-direction:column}
   .tabsRow{display:flex;align-items:center;justify-content:space-between;gap:10px;flex:0 0 auto;margin-bottom:6px;flex-wrap:wrap}
   .tabs{display:flex;gap:4px;background:rgba(148,163,184,.07);padding:3px;border-radius:11px;border:1px solid var(--line2)}
@@ -898,18 +844,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .autobtn.on{color:#d7fff7;border-color:rgba(94,234,212,.42);background:rgba(94,234,212,.15)}
   .chartShell{position:relative;flex:1 1 auto;min-height:0}
 
-  /* 修正: .plot はデフォルトで static、flowWorldPlot 以外で absolute */
   .plot{position:relative;width:100%;height:100%;opacity:1;transition:opacity .32s ease}
   .plot:not(.flowWorldPlot){position:absolute;inset:0}
   .js-plotly-plot .plotly .modebar{display:none!important}
 
-  /* ---------- flowworld 専用スタイル ---------- */
   .flowWorldPlot{display:flex;flex-direction:column;gap:8px;height:100%}
   .fwMap{flex:3;min-height:0;border-radius:10px;border:1px solid var(--line2);background:rgba(8,14,24,.35)}
   .fwBottom{flex:2;min-height:0;display:grid;grid-template-columns:2fr 1fr;gap:8px}
   .fwTime,.fwWheel{border-radius:10px;border:1px solid var(--line2);background:rgba(8,14,24,.35);min-height:0}
 
-  /* ---------- heat strip ---------- */
   .heatPanel{flex:0 0 auto;padding:9px 12px 10px}
   table.heat{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:10.8px}
   table.heat th{font-size:9.5px;font-weight:700;letter-spacing:.06em;color:var(--muted);text-align:right;
@@ -921,7 +864,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   table.heat td.h.pos{color:#d1fae5} table.heat td.h.neg{color:#ffe4e6}
   table.heat td.na{color:#43536b}
 
-  /* ---------- metrics list ---------- */
   .metrics{flex:1 1 auto;min-height:0}
   .mlist{display:flex;flex-direction:column;overflow:auto;min-height:0;scrollbar-width:thin;margin:0 -4px;padding:0 4px;flex:1 1 auto}
   .mlist::-webkit-scrollbar{width:5px}
@@ -938,7 +880,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .chip.flat{color:#0b1220;background:rgba(148,163,184,.55)}
   .chip.ghost{color:var(--muted);background:rgba(148,163,184,.10);font-weight:700}
 
-  /* ---------- status / footer ---------- */
   .statusPanel{flex:0 0 auto;padding:10px 12px}
   .sgrid{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:10.3px;color:var(--muted)}
   .sitem{display:flex;align-items:center;gap:5px;min-width:0}
@@ -1068,7 +1009,6 @@ const DASH = __PAYLOAD__;
 const FONT = "'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic UI','Meiryo','Noto Sans JP',sans-serif";
 const state = {tab:0, period:'ALL', auto:true, hover:false, rendered:{}};
 
-/* ---------- ユーティリティ ---------- */
 function hexToRgba(hex, alpha) {
   var r = parseInt(hex.slice(1, 3), 16);
   var g = parseInt(hex.slice(3, 5), 16);
@@ -1120,7 +1060,6 @@ function layoutFor(g) {
   return l;
 }
 
-/* ---------- 通常チャート描画 ---------- */
 function renderChart(i) {
   var g = DASH.groups[i];
   var el = document.getElementById('chart' + i);
@@ -1148,12 +1087,10 @@ function iso(dt) {
   return dt.getFullYear() + '-' + m + '-' + day;
 }
 
-/* ---------- FlowWorld 描画（v4改: レイアウト修正版） ---------- */
 function renderFlowWorld(i) {
   var flow = DASH.flow;
   if (!flow || !flow.nodes) return;
 
-  // サンキー図
   var sankeyData = [{
     type: 'sankey',
     orientation: 'h',
@@ -1191,7 +1128,6 @@ function renderFlowWorld(i) {
     Plotly.newPlot(sankeyEl, sankeyData, sankeyLayout, {displayModeBar: false, responsive: true});
   }
 
-  // ヒートマップ
   var hm = DASH.flow_heatmap;
   if (hm && hm.length) {
     var regions = {};
@@ -1217,7 +1153,7 @@ function renderFlowWorld(i) {
       y: regionList,
       colorscale: [[0, '#0f172a'], [0.5, '#fbbf24'], [1, '#34d399']],
       showscale: false,
-      hovertemplate: '%{y} × %{x}<br>スコア: %{z:.2f}<extra></extra>'
+      hovertemplate: '%{y} x %{x}<br>スコア: %{z:.2f}<extra></extra>'
     }];
 
     var heatmapLayout = {
@@ -1234,7 +1170,6 @@ function renderFlowWorld(i) {
     }
   }
 
-  // ローテーションウィール（ドーナツ）
   var rot = DASH.flow_rotation;
   if (rot && rot.labels) {
     var pieData = [{
@@ -1270,7 +1205,6 @@ function renderFlowWorld(i) {
   state.rendered[i] = true;
 }
 
-/* ---------- タブ切り替え（v4改: 表示制御修正） ---------- */
 function showTab(i) {
   state.tab = i;
   var tabs = document.querySelectorAll('.tab');
@@ -1284,7 +1218,6 @@ function showTab(i) {
       setTimeout((function(idx) {
         return function() {
           plots[idx].style.opacity = '1';
-          // 表示後にリサイズを強制
           if (DASH.groups[idx] && DASH.groups[idx].is_flowworld) {
             renderFlowWorld(idx);
           } else {
@@ -1301,7 +1234,6 @@ function showTab(i) {
 
   if (!state.rendered[i]) {
     if (DASH.groups[i] && DASH.groups[i].is_flowworld) {
-      // flowworld は表示後に描画
       setTimeout(function() { renderFlowWorld(i); }, 60);
     } else {
       renderChart(i);
@@ -1313,7 +1245,6 @@ function showTab(i) {
   applyPeriod(i);
 }
 
-/* ---------- イベントリスナー ---------- */
 document.querySelectorAll('.tab').forEach(function(b) {
   b.addEventListener('click', function() {
     state.auto = false;
@@ -1364,7 +1295,6 @@ window.addEventListener('resize', function() {
     if (!state.rendered[i]) continue;
     var el = document.getElementById('chart' + i);
     if (el && window.Plotly) Plotly.Plots.resize(el);
-    // flowworld 子要素もリサイズ
     if (DASH.groups[i] && DASH.groups[i].is_flowworld) {
       var mapEl = document.getElementById('fwMap' + i);
       var timeEl = document.getElementById('fwTime' + i);
@@ -1376,7 +1306,6 @@ window.addEventListener('resize', function() {
   }
 });
 
-/* ---------- count-up & gauge ---------- */
 function countUp(el) {
   var target = parseFloat(el.dataset.num || '0'), dec = parseInt(el.dataset.dec || '0', 10);
   var suffix = el.dataset.suffix || '', pre = el.dataset.pre || '';
@@ -1387,17 +1316,16 @@ function countUp(el) {
     var p = Math.min((ts - t0) / dur, 1);
     var e = 1 - Math.pow(1 - p, 3);
     var v = target * e;
-    el.textContent = pre + v.toLocaleString('ja-JP', {minimumFractionDigits: dec, maximumFractionDigits: dec}) + suffix;
+    el.textContent = pre + v.toLocaleString('ja-JP', {minimumFractionDigits:dec, maximumFractionDigits:dec}) + suffix;
     if (p < 1) requestAnimationFrame(step);
   }
   requestAnimationFrame(step);
 }
 document.querySelectorAll('#gaugeNum').forEach(countUp);
 var arc = document.getElementById('gaugeArc');
-if (arc) { var ratio = Math.max(0, Math.min(1, parseFloat(arc.dataset.ratio || '0'))); }
-setTimeout(function() { if (arc) arc.style.strokeDashoffset = String(308 * (1 - ratio)); }, 90);
+if(arc){ var ratio = Math.max(0, Math.min(1, parseFloat(arc.dataset.ratio || '0'))); }
+setTimeout(function(){ if(arc) arc.style.strokeDashoffset = String(308 * (1 - ratio)); }, 90);
 
-/* ---------- first paint ---------- */
 showTab(0);
 </script>
 </body>
@@ -1444,7 +1372,7 @@ CHART_GROUPS: list[dict] = [
         "y2": "VIX・債券ボラ bp（右軸）",
         "hline": None,
         "series": [
-            ("米ドル指 (DXY)", "#e9eefa", "y", 2.2, None, False),
+            ("米ドル指数 (DXY)", "#e9eefa", "y", 2.2, None, False),
             ("VIX (株式恐怖指数)", "#fb7185", "y2", 1.7, "dot", False),
             ("米国債ボラティリティ (bp)", "#a78bfa", "y2", 1.5, "solid", False),
         ],
@@ -1467,7 +1395,7 @@ CHART_GROUPS: list[dict] = [
         "key": "liquidity",
         "label": "流動性",
         "caption": "M2／MMF",
-        "y1": "米国M2十億ドル）",
+        "y1": "米国M2（十億ドル）",
         "y2": "MMF残高（十億ドル・右軸）",
         "hline": None,
         "series": [
@@ -1478,7 +1406,6 @@ CHART_GROUPS: list[dict] = [
     },
 ]
 
-# 指標スナップショット（右カラム）に並べる系列と表示形式
 SNAPSHOT_SERIES: list[tuple[str, str, int]] = [
     ("ビットコイン (BTC)", "", 0),
     ("米国株 (S&P 500)", "", 0),
@@ -1489,7 +1416,7 @@ SNAPSHOT_SERIES: list[tuple[str, str, int]] = [
     ("VIX (株式恐怖指数)", "", 2),
     ("ハイイールド債スプレッド (%)", " %", 2),
     ("米国債ボラティリティ (bp)", " bp", 1),
-    ("ステブルコイン時価総額 ($B)", " B$", 1),
+    ("ステーブルコイン時価総額 ($B)", " B$", 1),
     ("米国M2 ($B)", " B$", 0),
     ("米国MMF残高 ($B)", " B$", 0),
 ]
@@ -1498,8 +1425,6 @@ SNAPSHOT_SERIES: list[tuple[str, str, int]] = [
 # =============================================================================
 # H. マネーフロー計算（v4追加）
 # =============================================================================
-
-# 資産クラス → 地域の分類マッピング
 ASSET_REGION_MAP: dict[str, str] = {
     "米国株 (S&P 500)": "北米",
     "ビットコイン (BTC)": "暗号資産",
@@ -1513,7 +1438,7 @@ ASSET_REGION_MAP: dict[str, str] = {
     "インド (Nifty 50)": "アジア",
     "ブラジル (BOVESPA)": "ラテン",
     "オーストラリア (ASX)": "大洋州",
-    "カナダ (TSX)": "北",
+    "カナダ (TSX)": "北米",
     "米長期債 (TLT)": "債券",
     "米中期債 (IEF)": "債券",
     "ハイールド債 (HYG)": "債券",
@@ -1538,7 +1463,7 @@ ASSET_CLASS_MAP: dict[str, str] = {
     "ブラジル (BOVESPA)": "株式",
     "オーストラリア (ASX)": "株式",
     "カナダ (TSX)": "株式",
-    "長期債 (TLT)": "債券",
+    "米長期債 (TLT)": "債券",
     "米中期債 (IEF)": "債券",
     "ハイールド債 (HYG)": "債券",
     "投資適格債 (LQD)": "債券",
@@ -1550,19 +1475,15 @@ ASSET_CLASS_MAP: dict[str, str] = {
 
 
 def calc_flow_score(s: pd.Series, days: int = 30) -> float:
-    """1ヶ月リターンを[-1, 1]に正規化した資金フロースコア。"""
     if s is None or s.empty:
         return 0.0
     r = period_return(s, days)
     if r is None:
         return 0.0
-    # 月次リターン ±15% を ±1.0 にマップ（tanhで飽和）
     return float(math.tanh(r / 15.0))
 
 
 def build_sankey_flow(data: dict[str, pd.Series]) -> dict:
-    """Sankey図用: 源泉→資産クラス→地域のフローデータを構築。"""
-    # ソースノード定義
     source_nodes = ["M2拡大", "MMF流出", "ドル安", "ステーブル流入", "VIX低下"]
     asset_classes = ["株式", "債券", "商品", "暗号資産", "不動産", "現金待機"]
     regions = ["北米", "欧州", "日本", "アジア", "ラテン", "大洋州", "新興国", "先進国", "グローバル"]
@@ -1572,7 +1493,6 @@ def build_sankey_flow(data: dict[str, pd.Series]) -> dict:
 
     links: list[dict] = []
 
-    # 各資産のフロースコアを計算
     asset_scores: dict[str, float] = {}
     for label in list(ASSET_CLASS_MAP.keys()):
         s = data.get(label)
@@ -1582,20 +1502,16 @@ def build_sankey_flow(data: dict[str, pd.Series]) -> dict:
     if not asset_scores:
         return {"nodes": all_nodes, "links": [], "scores": {}}
 
-    # 資産クラスごとにスコア集計
     class_scores: dict[str, float] = {c: 0.0 for c in asset_classes}
     for label, score in asset_scores.items():
         cls = ASSET_CLASS_MAP.get(label, "株式")
         class_scores[cls] += score
 
-    # 地域ごとにスコア集計
     region_scores: dict[str, float] = {r: 0.0 for r in regions}
     for label, score in asset_scores.items():
         region = ASSET_REGION_MAP.get(label, "グローバル")
         region_scores[region] += score
 
-    # ソース→資産クラスのリンク
-    # M2拡大 → 株式・債券・商品（M2増加なら流入）
     m2 = data.get("米国M2 ($B)")
     m2_flow = calc_flow_score(m2, 90) if m2 is not None else 0.0
     if m2_flow > 0:
@@ -1603,35 +1519,30 @@ def build_sankey_flow(data: dict[str, pd.Series]) -> dict:
         links.append({"source": node_idx["M2拡大"], "target": node_idx["債券"], "value": abs(m2_flow) * 0.3})
         links.append({"source": node_idx["M2拡大"], "target": node_idx["商品"], "value": abs(m2_flow) * 0.2})
 
-    # MMF流出 → 株式・債券（MMF減少なら市場へ流入）
     mmf = data.get("米国MMF残高 ($B)")
-    mmf_flow = -calc_flow_score(mmf, 90) if mmf is not None else 0.0  # 減少=流入なので符号反転
+    mmf_flow = -calc_flow_score(mmf, 90) if mmf is not None else 0.0
     if mmf_flow > 0:
         links.append({"source": node_idx["MMF流出"], "target": node_idx["株式"], "value": abs(mmf_flow) * 0.6})
         links.append({"source": node_idx["MMF流出"], "target": node_idx["債券"], "value": abs(mmf_flow) * 0.4})
 
-    # ドル安 → 株式・商品・債券
     dxy = data.get("米ドル指数 (DXY)")
-    dxy_flow = -calc_flow_score(dxy, 30) if dxy is not None else 0.0  # ドル安=他通貨高
+    dxy_flow = -calc_flow_score(dxy, 30) if dxy is not None else 0.0
     if dxy_flow > 0:
         links.append({"source": node_idx["ドル安"], "target": node_idx["株式"], "value": abs(dxy_flow) * 0.4})
         links.append({"source": node_idx["ドル安"], "target": node_idx["商品"], "value": abs(dxy_flow) * 0.35})
         links.append({"source": node_idx["ドル安"], "target": node_idx["債券"], "value": abs(dxy_flow) * 0.25})
 
-    # ステーブル流入 → 暗号資産
     stable = data.get("ステーブルコイン時価総額 ($B)")
     stable_flow = calc_flow_score(stable, 30) if stable is not None else 0.0
     if stable_flow > 0:
         links.append({"source": node_idx["ステーブル流入"], "target": node_idx["暗号資産"], "value": abs(stable_flow)})
 
-    # VIX低下 → 株式・不動産
     vix = data.get("VIX (株式恐怖指数)")
-    vix_flow = -calc_flow_score(vix, 30) if vix is not None else 0.0  # VIX低下=リスクオン
+    vix_flow = -calc_flow_score(vix, 30) if vix is not None else 0.0
     if vix_flow > 0:
         links.append({"source": node_idx["VIX低下"], "target": node_idx["株式"], "value": abs(vix_flow) * 0.7})
         links.append({"source": node_idx["VIX低下"], "target": node_idx["不動産"], "value": abs(vix_flow) * 0.3})
 
-    # 資産クラス→地域のリンク
     class_to_region: dict[str, list[tuple[str, float]]] = {
         "株式": [("北米", 0.25), ("欧州", 0.20), ("日本", 0.10), ("アジア", 0.20), ("ラテン", 0.10), ("大洋州", 0.05), ("新興国", 0.10)],
         "債券": [("北米", 0.50), ("欧州", 0.25), ("新興国", 0.15), ("先進国", 0.10)],
@@ -1651,7 +1562,6 @@ def build_sankey_flow(data: dict[str, pd.Series]) -> dict:
                 "value": abs(score) * weight,
             })
 
-    # 個別資産スコアも返す（ヒートマップ用）
     return {
         "nodes": all_nodes,
         "links": links,
@@ -1662,7 +1572,6 @@ def build_sankey_flow(data: dict[str, pd.Series]) -> dict:
 
 
 def build_flow_heatmap(data: dict[str, pd.Series]) -> list[dict]:
-    """世界マネー・ヒートマップ用データ（地域×資産クラス）。"""
     rows: list[dict] = []
     for label, score in build_sankey_flow(data)["scores"].items():
         region = ASSET_REGION_MAP.get(label, "グローバル")
@@ -1678,7 +1587,6 @@ def build_flow_heatmap(data: dict[str, pd.Series]) -> list[dict]:
 
 
 def build_rotation_wheel(data: dict[str, pd.Series]) -> dict:
-    """資産ローテーション・ホイール用データ。"""
     flow = build_sankey_flow(data)
     classes = ["株式", "債券", "商品", "暗号資産", "不動産"]
     values = [max(0, flow["class_scores"].get(c, 0)) for c in classes]
@@ -1694,7 +1602,6 @@ def build_rotation_wheel(data: dict[str, pd.Series]) -> dict:
 # I. チャートペイロード構築
 # =============================================================================
 def _series_to_points(s: pd.Series, limit: int = 260) -> tuple[list[str], list[float]]:
-    """Plotly 用に (日付文字列リスト, 数値リスト) へ変換する。長い系列は間引く。"""
     if s is None or s.empty:
         return [], []
     step = max(1, len(s) // limit)
@@ -1707,7 +1614,6 @@ def _series_to_points(s: pd.Series, limit: int = 260) -> tuple[list[str], list[f
 
 
 def build_chart_payload(data: dict[str, pd.Series]) -> list[dict]:
-    """タブごとのチャート定義を作る。"""
     groups: list[dict] = []
     for spec in CHART_GROUPS:
         traces: list[dict] = []
@@ -1757,10 +1663,9 @@ def build_chart_payload(data: dict[str, pd.Series]) -> list[dict]:
 
 
 # =============================================================================
-# J. レンダリング関数
+# J. レンダリング関数（f-string修正済み - .format()方式に変更）
 # =============================================================================
 def _spark_svg(s: pd.Series, up_color: str = "#34d399", down_color: str = "#fb7185") -> str:
-    """右カラム用のミニスパークライン（SVG）を作る。"""
     if s is None or len(s) < 3:
         return ""
     tail = s.tail(48)
@@ -1773,29 +1678,29 @@ def _spark_svg(s: pd.Series, up_color: str = "#34d399", down_color: str = "#fb71
     for i, v in enumerate(tail.values):
         x = (i / (n - 1)) * w
         y = h - ((float(v) - lo) / (hi - lo)) * (h - 2.0) - 1.0
-        pts.append(f"{x:.1f},{y:.1f}")
+        pts.append("{:.1f},{:.1f}".format(x, y))
     color = up_color if tail.iloc[-1] >= tail.iloc[0] else down_color
-    return (f"<svg class="spark" viewBox="0 0 66 16" preserveAspectRatio="none">"
-            f"<polyline points="{" ".join(pts)}" fill="none" stroke="{color}" "
-            f"stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/></svg>")
+    return (
+        '<svg class="spark" viewBox="0 0 66 16" preserveAspectRatio="none">'
+        '<polyline points="{pts}" fill="none" stroke="{color}" '
+        'stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/></svg>'
+    ).format(pts=" ".join(pts), color=color)
 
 
 def _num(v: Optional[float], unit: str = "", digits: int = 0) -> str:
-    """符号付き数値の整形（未取得はダッシュ）。"""
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
-    return f"{v:+,.{digits}f}{unit}"
+    return "{:+,.{digits}f}{unit}".format(v, digits=digits, unit=unit)
 
 
 def _chip(v: Optional[float], digits: int = 2) -> str:
     if v is None:
-        return "<span class="chip ghost">—</span>"
+        return '<span class="chip ghost">—</span>'
     cls = "up" if v > 0.0001 else ("down" if v < -0.0001 else "flat")
-    return f"<span class="chip {cls}">{v:+.{digits}f}%</span>"
+    return '<span class="chip {cls}">{v:+.{digits}f}%</span>'.format(cls=cls, v=v, digits=digits)
 
 
 def render_snapshot(data: dict[str, pd.Series]) -> str:
-    """右カラム: 指標スナップショット（最新値＋1ヶ月比＋スパークライン）。"""
     out: list[str] = []
     for label, unit, digits in SNAPSHOT_SERIES:
         s = data.get(label)
@@ -1804,28 +1709,31 @@ def render_snapshot(data: dict[str, pd.Series]) -> str:
         d1m = period_return(s, 30)
         name = label.replace(" ($B)", "").replace(" (%)", "").replace(" (bp)", "")
         out.append(
-            f"<div class="mrow">"
-            f"<div class="nm">{html_lib.escape(name)}</div>"
-            f"<div class="vl">{_fmt(s.iloc[-1], unit, digits)}</div>"
-            f"<div class="rt">{_spark_svg(s)}{_chip(d1m)}</div>"
-            f"</div>"
+            '<div class="mrow">'
+            '<div class="nm">{name}</div>'
+            '<div class="vl">{last}</div>'
+            '<div class="rt">{spark}{chip}</div>'
+            '</div>'.format(
+                name=html_lib.escape(name),
+                last=_fmt(s.iloc[-1], unit, digits),
+                spark=_spark_svg(s),
+                chip=_chip(d1m),
+            )
         )
     return "\n".join(out)
 
 
 def _heat_bg(v: Optional[float]) -> str:
-    """騰落率に応じたセル背景色（ヒートマップ風）。"""
     if v is None:
         return ""
     cap = 25.0
     a = min(abs(v) / cap, 1.0)
     alpha = 0.10 + a * 0.55
     rgb = "52,211,153" if v > 0 else "251,113,133"
-    return f' style="background:rgba({rgb},{alpha:.2f})"'
+    return ' style="background:rgba({rgb},{alpha:.2f})"'.format(rgb=rgb, alpha=alpha)
 
 
 def render_heat(rows: list[dict]) -> str:
-    """中央下: 期間別パフォーマンスのヒート表（変化率を持つ系列のみ）。"""
     rows = [
         r for r in rows
         if r["values"].get("all") is not None
@@ -1833,43 +1741,43 @@ def render_heat(rows: list[dict]) -> str:
     ]
     if not rows:
         return '<p style="margin:0;font-size:11px;color:#6f819a">表示できるデータがありません。</p>'
-    head = ["<tr><th>指標</th><th>直近値</th>"]
+    head = ['<tr><th>指標</th><th>直近値</th>']
     for _k, lab, _d in PERIOD_LABELS:
-        head.append(f"<th>{lab}</th>")
+        head.append("<th>{lab}</th>".format(lab=lab))
     head.append("<th>全期間</th></tr>")
 
     body: list[str] = []
     for r in rows:
-        cells = [f'<td>{html_lib.escape(r["label"].split(" (")[0])}</td>',
-                 f'<td>{r["last"]}</td>']
+        cells = [
+            '<td>{label}</td>'.format(label=html_lib.escape(r["label"].split(" (")[0])),
+            '<td>{last}</td>'.format(last=r["last"])
+        ]
         for k, _lab, _d in PERIOD_LABELS:
             v = r["values"].get(k)
             if v is None:
-                cells.append(''<td class="na">—</td>'')
+                cells.append('<td class="na">—</td>')
             else:
                 cls = "pos" if v > 0 else "neg"
-                cells.append(f'<td class="h {cls}"{_heat_bg(v)}>{v:+.1f}</td>')
+                cells.append('<td class="h {cls}"{bg}>{v:+.1f}</td>'.format(cls=cls, bg=_heat_bg(v), v=v))
         allv = r["values"].get("all")
         if allv is None:
-            cells.append(''<td class="na">—</td>'')
+            cells.append('<td class="na">—</td>')
         else:
             cls = "pos" if allv > 0 else "neg"
-            cells.append(f'<td class="h {cls}"{_heat_bg(allv)}>{allv:+.1f}</td>')
+            cells.append('<td class="h {cls}"{bg}>{v:+.1f}</td>'.format(cls=cls, bg=_heat_bg(allv), v=allv))
         body.append("<tr>" + "".join(cells) + "</tr>")
-    return (''<table class="heat"><thead>'' + "".join(head) + "</thead><tbody>"
-            + "\n".join(body) + "</tbody></table>")
+    return '<table class="heat"><thead>' + "".join(head) + "</thead><tbody>" + "\n".join(body) + "</tbody></table>"
 
 
 def render_reasons(reasons: list[tuple[str, bool]]) -> str:
     out = []
     for text, positive in reasons:
         cls = "on" if positive else "off"
-        out.append(f"        <li class="{cls}">{html_lib.escape(text)}</li>")
+        out.append('<li class="{cls}">{text}</li>'.format(cls=cls, text=html_lib.escape(text)))
     return "\n".join(out)
 
 
 def render_ticker(data: dict[str, pd.Series]) -> str:
-    """ヘッダー下を流れる相場テープ（2周ぶん並べて継ぎ目を消す）。"""
     items: list[str] = []
     for label, _unit, digits in SNAPSHOT_SERIES:
         s = data.get(label)
@@ -1877,61 +1785,74 @@ def render_ticker(data: dict[str, pd.Series]) -> str:
             continue
         d1 = _pct_change_n(s, 1)
         cls = "up" if (d1 or 0) > 0.0001 else ("down" if (d1 or 0) < -0.0001 else "flat")
-        txt = "—" if d1 is None else f"{d1:+.2f}%"
+        txt = "—" if d1 is None else "{:+.2f}%".format(d1)
         name = label.split(" (")[0]
         items.append(
-            f"<span>{html_lib.escape(name)} <b>{_fmt(s.iloc[-1], "", digits)}</b>"
-            f"<em class="{cls}">{txt}</em></span>"
+            '<span>{name} <b>{last}</b>'
+            '<em class="{cls}">{txt}</em></span>'.format(
+                name=html_lib.escape(name),
+                last=_fmt(s.iloc[-1], "", digits),
+                cls=cls,
+                txt=txt,
+            )
         )
     return "".join(items) + "".join(items)
 
 
 def render_status_grid() -> tuple[str, str]:
-    """データ取得状況のコンパクト表示。"""
     if not FETCH_STATUS:
-        return "—", ''<div class="sitem"><span class="dot ng"></span><span>取得状況を記録できませんでした</span></div>''
+        return "—", '<div class="sitem"><span class="dot ng"></span><span>取得状況を記録できませんでした</span></div>'
     items = []
     for item in FETCH_STATUS:
         cls = "ok" if item["ok"] else "ng"
         label = html_lib.escape(item["label"].split(" (")[0])
-        items.append(f"<div class="sitem" title="{html_lib.escape(item["source"])}／"
-                     f"{html_lib.escape(item["detail"])}">"
-                     f"<span class="dot {cls}"></span><span>{label}</span></div>")
+        items.append(
+            '<div class="sitem" title="{source}／{detail}">'
+            '<span class="dot {cls}"></span><span>{label}</span></div>'.format(
+                source=html_lib.escape(item["source"]),
+                detail=html_lib.escape(item["detail"]),
+                cls=cls,
+                label=label,
+            )
+        )
     ng = sum(1 for x in FETCH_STATUS if not x["ok"])
-    summary = f"全{len(FETCH_STATUS)}系列／失敗{ng}件" if ng else f"全{len(FETCH_STATUS)}系列OK"
+    summary = "全{n}系列／失敗{ng}件".format(n=len(FETCH_STATUS), ng=ng) if ng else "全{n}系列OK".format(n=len(FETCH_STATUS))
     return summary, "\n".join(items)
 
 
 def _render_risk_metrics(board: dict) -> str:
-    """左カラム下段: ボラティリティ・最大DD・200日線乖離のミニ表示。"""
     rows: list[str] = []
     for m in board.get("_risk_metrics", []):
         rows.append(
-            f"<div class="mrow"><div class="nm">{html_lib.escape(m["label"].split(" (")[0])}</div>"
-            f"<div class="vl">{_num(m["sma_dev"], "%", 1)}</div>"
-            f"<div class="rt" style="gap:9px;color:#6f819a;font-size:10px">"
-            f"<span>ボラ {_num(m["vol"], "%", 0)}</span>"
-            f"<span>最大DD {_num(m["mdd"], "%", 1)}</span>"
-            f"<span>200日線 {_num(m["sma_dev"], "%", 1)}</span></div></div>"
+            '<div class="mrow"><div class="nm">{label}</div>'
+            '<div class="vl">{sma_dev}</div>'
+            '<div class="rt" style="gap:9px;color:#6f819a;font-size:10px">'
+            '<span>ボラ {vol}</span>'
+            '<span>最大DD {mdd}</span>'
+            '<span>200日線 {sma_dev2}</span></div></div>'.format(
+                label=html_lib.escape(m["label"].split(" (")[0]),
+                sma_dev=_num(m["sma_dev"], "%", 1),
+                vol=_num(m["vol"], "%", 0),
+                mdd=_num(m["mdd"], "%", 1),
+                sma_dev2=_num(m["sma_dev"], "%", 1),
+            )
         )
-    return "\n".join(rows) if rows else ''<div class="mrow"><div class="nm">—</div></div>''
+    return "\n".join(rows) if rows else '<div class="mrow"><div class="nm">—</div></div>'
 
 
 # =============================================================================
 # K. ライブボード構築
 # =============================================================================
 def build_live_board(data: dict[str, pd.Series], analysis: dict) -> dict:
-    """タブ・ゲージ・スナップショット等の表示用データをまとめる。"""
     groups = build_chart_payload(data)
     status_summary, status_items = render_status_grid()
     score, total = analysis["score"], analysis["total"]
     ratio = (score / total) if total else 0.0
-
-    # v4改: マネーフローデータを追加
+    
     flow_data = build_sankey_flow(data)
     flow_heatmap = build_flow_heatmap(data)
     flow_rotation = build_rotation_wheel(data)
-
+    
     return {
         "groups": groups,
         "flow": flow_data,
@@ -1952,39 +1873,50 @@ def build_live_board(data: dict[str, pd.Series], analysis: dict) -> dict:
 
 
 # =============================================================================
-# L. HTML出力
+# L. HTML出力（.format()方式で安全に文字列生成）
 # =============================================================================
 def write_dashboard(board: dict, output_path: str = DEFAULT_OUTPUT,
                     include_plotlyjs: str = "cdn") -> str:
-    """単一HTML（スクロール不要のライブボード）を書き出す。"""
     out_dir = os.path.dirname(output_path) or "."
     os.makedirs(out_dir, exist_ok=True)
 
     updated_at = datetime.now(JST).strftime("%Y-%m-%d %H:%M JST")
-    period = f"{START_DATE} 〜 {datetime.now(JST).strftime('%Y-%m-%d')}""
+    period = "{start} 〜 {end}".format(
+        start=START_DATE,
+        end=datetime.now(JST).strftime('%Y-%m-%d')
+    )
 
     tabs = []
     plots = []
     for i, g in enumerate(board["groups"]):
         active = " active" if i == 0 else ""
         tabs.append(
-            f'<button class="tab{active}" data-i="{i}" type="button">'
-            f'{html_lib.escape(g["label"])}</button>'
+            '<button class="tab{active}" data-i="{i}" type="button">{label}</button>'.format(
+                active=active, i=i, label=html_lib.escape(g["label"])
+            )
         )
         if g.get("is_flowworld"):
             display_val = "block" if i == 0 else "none"
             plots.append(
-                f'<div class="plot flowWorldPlot" id="chart{i}" style="display:{display_val}">'
-                f'<div class="fwMap" id="fwMap{i}"></div>'
-                f'<div class="fwBottom">'
-                f'<div class="fwTime" id="fwTime{i}"></div>'
-                f'<div class="fwWheel" id="fwWheel{i}"></div>'
-                f'</div></div>'
+                '<div class="plot flowWorldPlot" id="chart{i}" style="display:{display}">'
+                '<div class="fwMap" id="fwMap{i}"></div>'
+                '<div class="fwBottom">'
+                '<div class="fwTime" id="fwTime{i}"></div>'
+                '<div class="fwWheel" id="fwWheel{i}"></div>'
+                '</div></div>'.format(i=i, display=display_val)
             )
-            plots.append(f"<div class="plot" id="chart{i}" style="display:{"block" if i==0 else "none"}"></div>")
+        else:
+            display_val = "block" if i == 0 else "none"
+            plots.append(
+                '<div class="plot" id="chart{i}" style="display:{display}"></div>'.format(
+                    i=i, display=display_val
+                )
+            )
 
     period_btns = "".join(
-        f'<button class="pbtn{" active" if p == "ALL" else ""}" data-p="{p}" type="button">{lab}</button>'
+        '<button class="pbtn{active}" data-p="{p}" type="button">{lab}</button>'.format(
+            active=" active" if p == "ALL" else "", p=p, lab=lab
+        )
         for p, lab in (("1M", "1M"), ("3M", "3M"), ("6M", "6M"), ("1Y", "1Y"), ("ALL", "全"))
     )
 
@@ -1993,13 +1925,15 @@ def write_dashboard(board: dict, output_path: str = DEFAULT_OUTPUT,
         "flow": board.get("flow", {}),
         "flow_heatmap": board.get("flow_heatmap", []),
         "flow_rotation": board.get("flow_rotation", {}),
-    }, ensure_ascii=False, separators=(",", ":")).replace("</", "<\/")
+    }, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
 
     if include_plotlyjs == "cdn":
-        plotly_tag = (''<script src="https://cdn.plot.ly/plotly-%s.min.js" charset="utf-8"></script>''
-                      % po.get_plotlyjs_version())
+        plotly_tag = (
+            '<script src="https://cdn.plot.ly/plotly-{ver}.min.js" charset="utf-8"></script>'
+            .format(ver=po.get_plotlyjs_version())
+        )
     else:
-        plotly_tag = "<script>%s</script>" % po.get_plotlyjs()
+        plotly_tag = "<script>{js}</script>".format(js=po.get_plotlyjs())
 
     html_doc = (
         HTML_TEMPLATE
@@ -2022,7 +1956,7 @@ def write_dashboard(board: dict, output_path: str = DEFAULT_OUTPUT,
         .replace("__STATUS_SUMMARY__", board["status_summary"])
         .replace("__STATUS__", board["status"])
         .replace("__FOOTER_LEFT__", "データ出所: Yahoo Finance（yfinance）／ FRED（米セントルイス連銀）／ DefiLlama — すべてAPIキー不要の公開データ")
-        .replace("__FOOTER_RIGHT__", f"本ページは情報提供のみを目的とした定点観測であり、投資助言・勧誘ではありません。　最終更新 {updated_at}")
+        .replace("__FOOTER_RIGHT__", "本ページは情報提供のみを目的とした定点観測であり、投資助言・勧誘ではありません。　最終更新 {updated_at}".format(updated_at=updated_at))
         .replace("__PAYLOAD__", payload)
         .replace("__PLOTLYJS__", "")
         .replace("<script></script>", plotly_tag)
@@ -2045,8 +1979,12 @@ def build_dashboard(output_path: str = DEFAULT_OUTPUT, demo: bool = False,
     path = write_dashboard(board, output_path, include_plotlyjs)
     size_kb = os.path.getsize(path) / 1024
     ng = sum(1 for x in FETCH_STATUS if not x["ok"])
-    print(f"正常に生成されました: {path} ({size_kb:,.0f} KB) / 取得失敗 {ng} 件")
-    print(f"地合い判定: {analysis['regime_label']}（スコア {analysis['score']}/{analysis['total']}）")
+    print("正常に生成されました: {path} ({size_kb:,.0f} KB) / 取得失敗 {ng} 件".format(
+        path=path, size_kb=size_kb, ng=ng
+    ))
+    print("地合い判定: {regime}（スコア {score}/{total}）".format(
+        regime=analysis["regime_label"], score=analysis["score"], total=analysis["total"]
+    ))
     return path
 
 
@@ -2055,8 +1993,8 @@ def build_dashboard(output_path: str = DEFAULT_OUTPUT, demo: bool = False,
 # =============================================================================
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Global Money Flow ライブボード生成")
-    p.add_argument("--output", default=DEFAULT_OUTPUT, help=f"出力HTMLパス（既定: {DEFAULT_OUTPUT}）")
-    p.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS, help="取得期間（日数, 既定: 730）")
+    p.add_argument("--output", default=DEFAULT_OUTPUT, help="出力HTMLパス（既定: {default}）".format(default=DEFAULT_OUTPUT))
+    p.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS, help="取得期間（日数, 既定: {default}）".format(default=DEFAULT_LOOKBACK_DAYS))
     p.add_argument("--demo", action="store_true", help="ダミーデータで動作確認（ネットワーク未使用）")
     p.add_argument("--inline-plotlyjs", action="store_true", help="Plotly.js をHTMLに同梱（オフライン閲覧用）")
     return p.parse_args(argv)
