@@ -1832,7 +1832,7 @@ def render_heat(rows: list[dict]) -> str:
         or any(v is not None for v in r["values"].values())
     ]
     if not rows:
-        return "<p style="margin:0;font-size:11px;color:#6f819a">表示できるデータがありません。</p>"
+        return '<p style="margin:0;font-size:11px;color:#6f819a">表示できるデータがありません。</p>'
     head = ["<tr><th>指標</th><th>直近値</th>"]
     for _k, lab, _d in PERIOD_LABELS:
         head.append(f"<th>{lab}</th>")
@@ -1840,21 +1840,21 @@ def render_heat(rows: list[dict]) -> str:
 
     body: list[str] = []
     for r in rows:
-        cells = [f"<td>{html_lib.escape(r["label"].split(" (")[0])}</td>",
-                 f"<td>{r["last"]}</td>"]
+        cells = [f'<td>{html_lib.escape(r["label"].split(" (")[0])}</td>',
+                 f'<td>{r["last"]}</td>']
         for k, _lab, _d in PERIOD_LABELS:
             v = r["values"].get(k)
             if v is None:
                 cells.append(''<td class="na">—</td>'')
             else:
                 cls = "pos" if v > 0 else "neg"
-                cells.append(f"<td class="h {cls}"{_heat_bg(v)}>{v:+.1f}</td>")
+                cells.append(f'<td class="h {cls}"{_heat_bg(v)}>{v:+.1f}</td>')
         allv = r["values"].get("all")
         if allv is None:
             cells.append(''<td class="na">—</td>'')
         else:
             cls = "pos" if allv > 0 else "neg"
-            cells.append(f"<td class="h {cls}"{_heat_bg(allv)}>{allv:+.1f}</td>")
+            cells.append(f'<td class="h {cls}"{_heat_bg(allv)}>{allv:+.1f}</td>')
         body.append("<tr>" + "".join(cells) + "</tr>")
     return (''<table class="heat"><thead>'' + "".join(head) + "</thead><tbody>"
             + "\n".join(body) + "</tbody></table>")
@@ -1967,21 +1967,24 @@ def write_dashboard(board: dict, output_path: str = DEFAULT_OUTPUT,
     plots = []
     for i, g in enumerate(board["groups"]):
         active = " active" if i == 0 else ""
-        tabs.append(f"<button class="tab{active}" data-i="{i}" type="button">"
-                    f"{html_lib.escape(g["label"])}</button>")
+        tabs.append(
+            f'<button class="tab{active}" data-i="{i}" type="button">'
+            f'{html_lib.escape(g["label"])}</button>'
+        )
         if g.get("is_flowworld"):
-            plots.append(f"'"'<div class="plot flowWorldPlot" id="chart{i}" style="display:{"block" if i==0 else "none"}">
-              <div class="fwMap" id="fwMap{i}"></div>
-              <div class="fwBottom">
-                <div class="fwTime" id="fwTime{i}"></div>
-                <div class="fwWheel" id="fwWheel{i}"></div>
-              </div>
-            </div>''''')
-        else:
+            display_val = "block" if i == 0 else "none"
+            plots.append(
+                f'<div class="plot flowWorldPlot" id="chart{i}" style="display:{display_val}">'
+                f'<div class="fwMap" id="fwMap{i}"></div>'
+                f'<div class="fwBottom">'
+                f'<div class="fwTime" id="fwTime{i}"></div>'
+                f'<div class="fwWheel" id="fwWheel{i}"></div>'
+                f'</div></div>'
+            )
             plots.append(f"<div class="plot" id="chart{i}" style="display:{"block" if i==0 else "none"}"></div>")
 
     period_btns = "".join(
-        f"<button class="pbtn{" active" if p == "ALL" else ""}" data-p="{p}" type="button">{lab}</button>"
+        f'<button class="pbtn{" active" if p == "ALL" else ""}" data-p="{p}" type="button">{lab}</button>'
         for p, lab in (("1M", "1M"), ("3M", "3M"), ("6M", "6M"), ("1Y", "1Y"), ("ALL", "全"))
     )
 
