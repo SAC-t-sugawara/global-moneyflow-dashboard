@@ -362,7 +362,10 @@ def _read_cache_all(series_id: str) -> pd.Series:
         if frame.empty or frame.shape[1] == 0:
             return pd.Series(dtype=float)
 
-        return _clean(frame.iloc[:, 0])
+        s = frame.iloc[:, 0]
+        # インデックスを強制的にDatetimeIndexに変換してからcleanを通す
+        s.index = pd.DatetimeIndex(s.index)
+        return _clean(s)
 
     except Exception as exc:
         print(f"[WARN] cache read {series_id}: {exc}")
