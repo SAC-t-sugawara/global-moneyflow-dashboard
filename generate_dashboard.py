@@ -351,25 +351,30 @@ def _cache_path(series_id: str) -> str:
 
 
 def _read_cache_all(series_id: str) -> pd.Series:
+    empty = pd.Series(
+        dtype=float,
+        index=pd.DatetimeIndex([]),
+    )
+
     path = _cache_path(series_id)
 
     if not os.path.exists(path):
-        return pd.Series(dtype=float)
+        return empty
 
     try:
         frame = pd.read_csv(path, index_col=0)
 
         if frame.empty or frame.shape[1] == 0:
-            return pd.Series(dtype=float)
+            return empty
 
-        s = frame.iloc[:, 0]
-        # インデックスを強制的にDatetimeIndexに変換してからcleanを通す
-        s.index = pd.DatetimeIndex(s.index)
-        return _clean(s)
+        return _clean(frame.iloc[:, 0])
 
     except Exception as exc:
-        print(f"[WARN] cache read {series_id}: {exc}")
-        return pd.Series(dtype=float)
+        print(
+            f"[WARN] cache read {series_id}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return empty
 
 
 def _save_cache(series_id: str, s: pd.Series) -> None:
@@ -389,8 +394,39 @@ def _save_cache(series_id: str, s: pd.Series) -> None:
 
 
 def _load_cache(series_id: str) -> pd.Series:
-    s = _read_cache_all(series_id)
-    return s[s.index >= _start_ts()]
+    """キャッシュなし・空・破損の場合も例外を出さず空系列を返す。"""
+    empty = pd.Series(
+        dtype=float,
+        index=pd.DatetimeIndex([]),
+    )
+
+    try:
+        s = _read_cache_all(series_id)
+
+        # キャッシュがない場合、日付比較をせずに終了する。
+        if s is None or s.empty:
+            return empty
+
+        s = _clean(s)
+
+        if s.empty:
+            return empty
+
+        if not isinstance(s.index, pd.DatetimeIndex):
+            print(
+                f"[WARN] cache {series_id}: "
+                "日付インデックスではないため使用しません"
+            )
+            return empty
+
+        return s.loc[s.index >= _start_ts()]
+
+    except Exception as exc:
+        print(
+            f"[WARN] cache fallback {series_id}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return empty
 
 
 def fetch_fred(
