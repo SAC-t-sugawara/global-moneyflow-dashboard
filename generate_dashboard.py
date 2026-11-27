@@ -11,7 +11,7 @@ APIキー不要の公開データから、単一HTMLのダッシュボードを�
     Yahoo Finance / yfinance
     FRED 公開CSV・テキスト
     DefiLlama
-
+ｆ
 タブ:
     flowworld / risk / stress / liquidity / assetclass
 
@@ -453,18 +453,15 @@ def fetch_fred(
     cached = _load_cache(series_id)
 
     if not cached.empty:
-        last_date = cached.index[-1].strftime("%Y-%m-%d")
-        _record(
-            label,
-            "保存済みキャッシュ",
-            True,
-            f"最新取得失敗。保存済みデータを使用。最終観測日 {last_date}",
-        )
-        print(
-            f"[ OK ] FRED cache {series_id}: "
-            f"{len(cached)} 件 / 最終観測日 {last_date}"
-        )
+        print(f"[ OK ] FRED(cache) {series_id}: {len(cached)} 件（保存済みデータ）")
+        _record(label, "保存済みキャッシュ", True,
+                f"最新取得に失敗したため前回データを表示（{last_error[:40]}）")
         return cached
+
+    # 【重要】取得もキャッシュもなくてもエラーで止めず、空のSeriesを返して全体を継続する
+    print(f"[WARN] FRED {series_id} の取得に完全に失敗しました。この指標はスキップします。")
+    _record(label, "FRED", False, f"取得失敗（スキップ継続）: {last_error[:60]}")
+    return pd.Series(dtype=float)
 
     _record(
         label,
