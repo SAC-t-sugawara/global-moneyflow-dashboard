@@ -1326,88 +1326,49 @@ def calc_flow_score(
 
 def build_sankey_flow(data: dict[str, pd.Series]) -> dict:
     """
-    マクロ指標 → 資産クラス → 地域 の概念モデル。
+    上昇・下落モメンタム → 資産クラス → 地域。
 
-    ・リンク幅は無次元のモデル強度。
-    ・資産クラス中間ノードの流入と流出を一致させる。
-    ・負のモメンタムはヒートマップに表示する。
-    ・欠損は0として扱わない。
+    リンク幅:
+        個別系列の1ヶ月モメンタムスコアの絶対値の合計。
+
+    注意:
+        実際の資金流入・流出額ではない。
+        複数指数・ETFには重複する投資対象が含まれる。
     """
-    source_specs = [
-        (
-            "M2拡大",
-            M2,
-            91,
-            1.0,
-            {"株式": 0.5, "債券": 0.3, "商品": 0.2},
-        ),
-        (
-            "MMF減少",
-            MMF,
-            91,
-            -1.0,
-            {"株式": 0.6, "債券": 0.4},
-        ),
-        (
-            "ドル安",
-            DXY,
-            30,
-            -1.0,
-            {"株式": 0.4, "商品": 0.35, "債券": 0.25},
-        ),
-        (
-            "ステーブル増加",
-            STABLE,
-            30,
-            1.0,
-            {"暗号資産": 1.0},
-        ),
-        (
-            "VIX低下",
-            VIX,
-            30,
-            -1.0,
-            {"株式": 0.7, "不動産": 0.3},
-        ),
+    source_nodes = ["上昇モメンタム", "下落モメンタム"]
+
+    class_nodes = [
+        f"{direction}：{asset_class}"
+        for direction in ("上昇", "下落")
+        for asset_class in FLOW_CLASSES
     ]
 
-    source_names = [item[0] for item in source_specs]
-    nodes = source_names + FLOW_CLASSES + FLOW_REGIONS
-    node_index = {name: index for index, name in enumerate(nodes)}
+    nodes = source_nodes + class_nodes + FLOW_REGIONS
+    node_index = {
+        name: index
+        for index, name in enumerate(nodes)
+    }
 
-    source_colors = [
-        "#22d3ee",
-        "#5eead4",
-        "#a78bfa",
-        "#34d399",
-        "#fb923c",
-    ]
-    region_colors = [
-        "#38bdf8",
-        "#a78bfa",
-        "#fb7185",
-        "#f97316",
-        "#eab308",
-        "#2dd4bf",
-        "#84cc16",
-        "#c084fc",
-        "#94a3b8",
-    ]
     node_colors = (
-        source_colors + FLOW_CLASS_COLORS + region_colors
+        ["#34d399", "#fb7185"]
+        + FLOW_CLASS_COLORS
+        + FLOW_CLASS_COLORS
+        + ["#64748b"] * len(FLOW_REGIONS)
     )
 
-    asset_scores: dict[str, float] = {}
-    class_values: dict[str, list[float]] = {
-        name: [] for name in FLOW_CLASSES
+    asset_scores = {}
+
+    class_values = {
+        name: []
+        for name in FLOW_CLASSES
     }
-    region_values: dict[str, list[float]] = {
-        name: [] for name in FLOW_REGIONS
+    region_values = {
+        name: []
+        for name in FLOW_REGIONS
     }
 
-    positive_by_class_region: dict[str, dict[str, float]] = {
-        name: defaultdict(float) for name in FLOW_CLASSES
-    }
+    # (上昇/下落, 資産クラス, 地域)ごとの絶対スコア
+    buckets = defaultdict(float)
 
     for label, asset_class in ASSET_CLASS_MAP.items():
         score = calc_flow_score(data.get(label), 30)
@@ -1421,68 +1382,67 @@ def build_sankey_flow(data: dict[str, pd.Series]) -> dict:
         class_values[asset_class].append(score)
         region_values[region].append(score)
 
-        if score > 0:
-            positive_by_class_region[asset_class][region] += score
+        # 変化ゼロの系列はリンクを生成しない
+        if abs(score) <= 1e-12:
+            continue
+
+        direction = "上昇" if score > 0 else "下落"
+
+        buckets[(direction, asset_class, region)] += abs(score)
 
     class_scores = {
         name: sum(values) / len(values) if values else None
         for name, values in class_values.items()
     }
+
     region_scores = {
         name: sum(values) / len(values) if values else None
         for name, values in region_values.items()
     }
 
     links = []
-    class_incoming = {name: 0.0 for name in FLOW_CLASSES}
 
-    for source_name, label, days, sign, weights in source_specs:
-        score = calc_flow_score(data.get(label), days)
+    for direction in ("上昇", "下落"):
+        source_name = f"{direction}モメンタム"
+        link_color = (
+            "rgba(52,211,153,0.35)"
+            if direction == "上昇"
+            else "rgba(251,113,133,0.35)"
+        )
 
-        if score is None:
-            continue
+        for asset_class in FLOW_CLASSES:
+            class_node = f"{direction}：{asset_class}"
 
-        strength = max(0.0, sign * score)
+            region_strengths = {
+                region: buckets[(direction, asset_class, region)]
+                for region in FLOW_REGIONS
+            }
 
-        if strength <= 0:
-            continue
+            total = sum(region_strengths.values())
 
-        eligible = {}
+            if total <= 0:
+                continue
 
-        for asset_class, prior_weight in weights.items():
-            momentum = class_scores.get(asset_class)
-
-            if momentum is not None and momentum > 0:
-                eligible[asset_class] = prior_weight * momentum
-
-        denominator = sum(eligible.values())
-
-        if denominator <= 0:
-            continue
-
-        for asset_class, weight in eligible.items():
-            value = strength * weight / denominator
-
+            # 源泉 → 資産クラス
             links.append({
                 "source": node_index[source_name],
-                "target": node_index[asset_class],
-                "value": value,
+                "target": node_index[class_node],
+                "value": total,
+                "color": link_color,
             })
-            class_incoming[asset_class] += value
 
-    for asset_class, incoming in class_incoming.items():
-        regions = positive_by_class_region[asset_class]
-        denominator = sum(regions.values())
+            # 資産クラス → 地域
+            # 中間ノードの流入量と流出量を一致させる
+            for region, strength in region_strengths.items():
+                if strength <= 0:
+                    continue
 
-        if incoming <= 0 or denominator <= 0:
-            continue
-
-        for region, weight in regions.items():
-            links.append({
-                "source": node_index[asset_class],
-                "target": node_index[region],
-                "value": incoming * weight / denominator,
-            })
+                links.append({
+                    "source": node_index[class_node],
+                    "target": node_index[region],
+                    "value": strength,
+                    "color": link_color,
+                })
 
     return {
         "nodes": nodes,
@@ -2423,7 +2383,9 @@ footer b{color:var(--ink2)}
         </div>
         <p class="note">
           ← →：タブ切り替え ／ F：全画面 ／
-          マネーフローは1ヶ月固定・マクロ源泉の一部は3ヶ月比較。
+          マネーフローは1ヶ月固定。
+          リンク幅は対象系列のモメンタム強度合計で、
+          実際の資金移動額ではありません。
           その他の期間ボタンは表示範囲のみ変更します。
         </p>
       </div>
@@ -2727,8 +2689,8 @@ async function renderFlowWorld(i) {
           [],
           emptyLayout(
             mapEl,
-            "マクロ源泉 → 資産クラス → 地域（概念モデル）",
-            "正の源泉条件と正の資産モメンタムの組み合わせがありません"
+            "上昇・下落モメンタム → 資産クラス → 地域",
+            "比較可能な1ヶ月データがないか、価格変化がゼロです"
           ),
           CONFIG
         )
@@ -2763,7 +2725,8 @@ async function renderFlowWorld(i) {
           target: links.map(function(link) { return link.target; }),
           value: links.map(function(link) { return link.value; }),
           color: links.map(function(link) {
-            return hexToRgba(colors[link.source] || "#38bdf8", 0.3);
+            return link.color
+              || hexToRgba(colors[link.source] || "#38bdf8", 0.3);
           }),
           hovertemplate:
             "%{source.label} → %{target.label}"
